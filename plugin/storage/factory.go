@@ -16,17 +16,18 @@
 package storage
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
-	"github.com/jaegertracing/jaeger/pkg/multierror"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/plugin"
 	"github.com/jaegertracing/jaeger/plugin/storage/badger"
+	"github.com/jaegertracing/jaeger/plugin/storage/blackhole"
 	"github.com/jaegertracing/jaeger/plugin/storage/cassandra"
 	"github.com/jaegertracing/jaeger/plugin/storage/es"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc"
@@ -45,6 +46,7 @@ const (
 	kafkaStorageType         = "kafka"
 	grpcPluginStorageType    = "grpc-plugin"
 	badgerStorageType        = "badger"
+	blackholeStorageType     = "blackhole"
 
 	downsamplingRatio    = "downsampling.ratio"
 	downsamplingHashSalt = "downsampling.hashsalt"
@@ -57,7 +59,36 @@ const (
 )
 
 // AllStorageTypes defines all available storage backends
-var AllStorageTypes = []string{cassandraStorageType, opensearchStorageType, elasticsearchStorageType, memoryStorageType, kafkaStorageType, badgerStorageType, grpcPluginStorageType}
+var AllStorageTypes = []string{
+	cassandraStorageType,
+	opensearchStorageType,
+	elasticsearchStorageType,
+	memoryStorageType,
+	kafkaStorageType,
+	badgerStorageType,
+	blackholeStorageType,
+	grpcPluginStorageType,
+}
+
+// AllSamplingStorageTypes returns all storage backends that implement adaptive sampling
+func AllSamplingStorageTypes() []string {
+	f := &Factory{}
+	var backends []string
+	for _, st := range AllStorageTypes {
+		f, _ := f.getFactoryOfType(st) // no errors since we're looping through supported types
+		if _, ok := f.(storage.SamplingStoreFactory); ok {
+			backends = append(backends, st)
+		}
+	}
+	return backends
+}
+
+var ( // interface comformance checks
+	_ storage.Factory        = (*Factory)(nil)
+	_ storage.ArchiveFactory = (*Factory)(nil)
+	_ io.Closer              = (*Factory)(nil)
+	_ plugin.Configurable    = (*Factory)(nil)
+)
 
 // Factory implements storage.Factory interface as a meta-factory for storage components.
 type Factory struct {
@@ -76,6 +107,10 @@ func NewFactory(config FactoryConfig) (*Factory, error) {
 	}
 	for _, storageType := range f.SpanWriterTypes {
 		uniqueTypes[storageType] = struct{}{}
+	}
+	// skip SamplingStorageType if it is empty. See CreateSamplingStoreFactory for details
+	if f.SamplingStorageType != "" {
+		uniqueTypes[f.SamplingStorageType] = struct{}{}
 	}
 	f.factories = make(map[string]storage.Factory)
 	for t := range uniqueTypes {
@@ -102,6 +137,8 @@ func (f *Factory) getFactoryOfType(factoryType string) (storage.Factory, error) 
 		return badger.NewFactory(), nil
 	case grpcPluginStorageType:
 		return grpc.NewFactory(), nil
+	case blackholeStorageType:
+		return blackhole.NewFactory(), nil
 	default:
 		return nil, fmt.Errorf("unknown storage type %s. Valid types are %v", factoryType, AllStorageTypes)
 	}
@@ -162,6 +199,20 @@ func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
 
 // CreateSamplingStoreFactory creates a distributedlock.Lock and samplingstore.Store for use with adaptive sampling
 func (f *Factory) CreateSamplingStoreFactory() (storage.SamplingStoreFactory, error) {
+	// if a sampling storage type was specified then use it, otherwise search all factories
+	// for compatibility
+	if f.SamplingStorageType != "" {
+		factory, ok := f.factories[f.SamplingStorageType]
+		if !ok {
+			return nil, fmt.Errorf("no %s backend registered for sampling store", f.SamplingStorageType)
+		}
+		ss, ok := factory.(storage.SamplingStoreFactory)
+		if !ok {
+			return nil, fmt.Errorf("storage factory of type %s does not support sampling store", f.SamplingStorageType)
+		}
+		return ss, nil
+	}
+
 	for _, factory := range f.factories {
 		ss, ok := factory.(storage.SamplingStoreFactory)
 		if ok {
@@ -193,8 +244,8 @@ func (f *Factory) AddFlags(flagSet *flag.FlagSet) {
 }
 
 // AddPipelineFlags adds all the standard flags as well as the downsampling
-//  flags.  This is intended to be used in Jaeger pipeline services such as
-//  the collector or ingester.
+// flags. This is intended to be used in Jaeger pipeline services such as
+// the collector or ingester.
 func (f *Factory) AddPipelineFlags(flagSet *flag.FlagSet) {
 	f.AddFlags(flagSet)
 	f.addDownsamplingFlags(flagSet)
@@ -283,7 +334,7 @@ func (f *Factory) Close() error {
 			}
 		}
 	}
-	return multierror.Wrap(errs)
+	return errors.Join(errs...)
 }
 
 func (f *Factory) publishOpts() {

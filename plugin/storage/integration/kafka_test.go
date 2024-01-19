@@ -21,14 +21,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/ingester/app"
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/builder"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/config"
+	"github.com/jaegertracing/jaeger/pkg/kafka/consumer"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/kafka"
 	"github.com/jaegertracing/jaeger/plugin/storage/memory"
@@ -90,7 +92,11 @@ func (s *KafkaIntegrationTestSuite) initialize() error {
 	if err != nil {
 		return err
 	}
-	options := app.Options{}
+	options := app.Options{
+		Configuration: consumer.Configuration{
+			InitialOffset: sarama.OffsetOldest,
+		},
+	}
 	options.InitFromViper(v)
 	traceStore := memory.NewStore()
 	spanConsumer, err := builder.CreateConsumer(s.logger, metrics.NullFactory, traceStore, options)

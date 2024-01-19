@@ -38,7 +38,7 @@ func main() {
 	cfg := &app.Config{}
 	tlsFlags := tlscfg.ClientFlagsConfig{Prefix: "es"}
 
-	var command = &cobra.Command{
+	command := &cobra.Command{
 		Use:   "jaeger-es-index-cleaner NUM_OF_DAYS http://HOSTNAME:PORT",
 		Short: "Jaeger es-index-cleaner removes Jaeger indices",
 		Long:  "Jaeger es-index-cleaner removes Jaeger indices",
@@ -52,7 +52,10 @@ func main() {
 			}
 
 			cfg.InitFromViper(v)
-			tlsOpts := tlsFlags.InitFromViper(v)
+			tlsOpts, err := tlsFlags.InitFromViper(v)
+			if err != nil {
+				return err
+			}
 			tlsCfg, err := tlsOpts.Config(logger)
 			if err != nil {
 				return err

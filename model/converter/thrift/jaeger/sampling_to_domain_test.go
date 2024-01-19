@@ -38,7 +38,7 @@ func TestConvertStrategyTypeToDomain(t *testing.T) {
 	for _, test := range tests {
 		st, err := convertStrategyTypeToDomain(test.in)
 		if test.err != nil {
-			assert.EqualError(t, test.err, err.Error())
+			require.EqualError(t, test.err, err.Error())
 		} else {
 			require.NoError(t, err)
 			assert.Equal(t, test.expected, st)
@@ -75,15 +75,21 @@ func TestConvertRateLimitingToDomain(t *testing.T) {
 }
 
 func TestConvertPerOperationStrategyToDomain(t *testing.T) {
-	var a = 11.2
+	a := 11.2
 	tests := []struct {
 		expected *api_v2.PerOperationSamplingStrategies
 		in       *sampling.PerOperationSamplingStrategies
 	}{
-		{expected: &api_v2.PerOperationSamplingStrategies{DefaultSamplingProbability: 15.2, DefaultUpperBoundTracesPerSecond: a, DefaultLowerBoundTracesPerSecond: 2,
-			PerOperationStrategies: []*api_v2.OperationSamplingStrategy{{Operation: "fao"}}},
-			in: &sampling.PerOperationSamplingStrategies{DefaultSamplingProbability: 15.2, DefaultUpperBoundTracesPerSecond: &a, DefaultLowerBoundTracesPerSecond: 2,
-				PerOperationStrategies: []*sampling.OperationSamplingStrategy{{Operation: "fao"}}}},
+		{
+			expected: &api_v2.PerOperationSamplingStrategies{
+				DefaultSamplingProbability: 15.2, DefaultUpperBoundTracesPerSecond: a, DefaultLowerBoundTracesPerSecond: 2,
+				PerOperationStrategies: []*api_v2.OperationSamplingStrategy{{Operation: "fao"}},
+			},
+			in: &sampling.PerOperationSamplingStrategies{
+				DefaultSamplingProbability: 15.2, DefaultUpperBoundTracesPerSecond: &a, DefaultLowerBoundTracesPerSecond: 2,
+				PerOperationStrategies: []*sampling.OperationSamplingStrategy{{Operation: "fao"}},
+			},
+		},
 		{},
 	}
 	for _, test := range tests {
@@ -105,7 +111,7 @@ func TestConvertSamplingResponseToDomain(t *testing.T) {
 	for _, test := range tests {
 		r, err := ConvertSamplingResponseToDomain(test.in)
 		if test.err != "" {
-			assert.EqualError(t, err, test.err)
+			require.EqualError(t, err, test.err)
 			require.Nil(t, r)
 		} else {
 			require.NoError(t, err)

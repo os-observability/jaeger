@@ -22,11 +22,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/jaegertracing/jaeger/cmd/agent/app/testutils"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
 	"github.com/jaegertracing/jaeger/thrift-gen/zipkincore"
 )
@@ -42,11 +42,9 @@ func (tr *clientMetricsTest) assertLog(t *testing.T, msg, clientUUID string) {
 	logs := tr.logs.FilterMessageSnippet(msg)
 	if clientUUID == "" {
 		assert.Equal(t, 0, logs.Len(), "not expecting log '%s", msg)
-	} else {
-		if assert.Equal(t, 1, logs.Len(), "expecting one log '%s'", msg) {
-			field := logs.All()[0].ContextMap()["client-uuid"]
-			assert.Equal(t, clientUUID, field, "client-uuid should be logged")
-		}
+	} else if assert.Equal(t, 1, logs.Len(), "expecting one log '%s'", msg) {
+		field := logs.All()[0].ContextMap()["client-uuid"]
+		assert.Equal(t, clientUUID, field, "client-uuid should be logged")
 	}
 }
 
@@ -58,6 +56,7 @@ func testClientMetricsWithParams(params ClientMetricsReporterParams, fn func(tr 
 	r1 := testutils.NewInMemoryReporter()
 	zapCore, logs := observer.New(zap.DebugLevel)
 	mb := metricstest.NewFactory(time.Hour)
+	defer mb.Stop()
 
 	params.Reporter = r1
 	params.Logger = zap.New(zapCore)
@@ -77,7 +76,7 @@ func testClientMetricsWithParams(params ClientMetricsReporterParams, fn func(tr 
 
 func TestClientMetricsReporter_Zipkin(t *testing.T) {
 	testClientMetrics(func(tr *clientMetricsTest) {
-		assert.NoError(t, tr.r.EmitZipkinBatch(context.Background(), []*zipkincore.Span{{}}))
+		require.NoError(t, tr.r.EmitZipkinBatch(context.Background(), []*zipkincore.Span{{}}))
 		assert.Len(t, tr.mr.ZipkinSpans(), 1)
 	})
 }
@@ -183,7 +182,7 @@ func TestClientMetricsReporter_Jaeger(t *testing.T) {
 				}
 
 				err := tr.r.EmitBatch(context.Background(), batch)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Len(t, tr.mr.Spans(), i+1)
 
 				tr.assertLog(t, "new client", test.expLog)
@@ -250,7 +249,7 @@ func TestClientMetricsReporter_Expire(t *testing.T) {
 			assert.EqualValues(t, 0, getGauge(), "start with gauge=0")
 
 			err := tr.r.EmitBatch(context.Background(), batch)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Len(t, tr.mr.Spans(), 1)
 
 			// we want this test to pass asap, but need to account for possible CPU contention in the CI

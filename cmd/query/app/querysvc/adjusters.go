@@ -28,7 +28,9 @@ func StandardAdjusters(maxClockSkewAdjust time.Duration) []adjuster.Adjuster {
 		adjuster.SpanIDDeduper(),
 		adjuster.ClockSkew(maxClockSkewAdjust),
 		adjuster.IPTagAdjuster(),
+		adjuster.OTelTagAdjuster(),
 		adjuster.SortLogFields(),
 		adjuster.SpanReferences(),
+		adjuster.ParentReference(),
 	}
 }

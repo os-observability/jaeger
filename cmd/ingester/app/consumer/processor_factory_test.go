@@ -20,22 +20,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	kmocks "github.com/jaegertracing/jaeger/cmd/ingester/app/consumer/mocks"
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/processor/mocks"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
 func Test_NewFactory(t *testing.T) {
 	params := ProcessorFactoryParams{}
 	newFactory, err := NewProcessorFactory(params)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, newFactory)
 }
 
 func Test_new(t *testing.T) {
-
 	mockConsumer := &kmocks.Consumer{}
 	mockConsumer.On("MarkPartitionOffset", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -47,7 +47,6 @@ func Test_new(t *testing.T) {
 	sp.On("Process", mock.Anything).Return(nil)
 
 	pf := ProcessorFactory{
-		topic:          topic,
 		consumer:       mockConsumer,
 		metricsFactory: metrics.NullFactory,
 		logger:         zap.NewNop(),
@@ -55,7 +54,8 @@ func Test_new(t *testing.T) {
 		parallelism:    1,
 	}
 
-	processor := pf.new(partition, offset)
+	processor := pf.new(topic, partition, offset)
+	defer processor.Close()
 	msg := &kmocks.Message{}
 	msg.On("Offset").Return(offset + 1)
 	processor.Process(msg)

@@ -18,22 +18,25 @@ package app
 import (
 	"os"
 
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/handler"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	zs "github.com/jaegertracing/jaeger/cmd/collector/app/sanitizer/zipkin"
 	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
 
 // SpanHandlerBuilder holds configuration required for handlers
 type SpanHandlerBuilder struct {
 	SpanWriter     spanstore.Writer
-	CollectorOpts  CollectorOptions
+	CollectorOpts  *flags.CollectorOptions
 	Logger         *zap.Logger
 	MetricsFactory metrics.Factory
+	TenancyMgr     *tenancy.Manager
 }
 
 // SpanHandlers holds instances to the span handlers built by the SpanHandlerBuilder
@@ -61,15 +64,20 @@ func (b *SpanHandlerBuilder) BuildSpanProcessor(additional ...ProcessSpan) proce
 		Options.CollectorTags(b.CollectorOpts.CollectorTags),
 		Options.DynQueueSizeWarmup(uint(b.CollectorOpts.QueueSize)), // same as queue size for now
 		Options.DynQueueSizeMemory(b.CollectorOpts.DynQueueSizeMemory),
+		Options.SpanSizeMetricsEnabled(b.CollectorOpts.SpanSizeMetricsEnabled),
 	)
 }
 
 // BuildHandlers builds span handlers (Zipkin, Jaeger)
 func (b *SpanHandlerBuilder) BuildHandlers(spanProcessor processor.SpanProcessor) *SpanHandlers {
 	return &SpanHandlers{
-		handler.NewZipkinSpanHandler(b.Logger, spanProcessor, zs.NewChainedSanitizer(zs.StandardSanitizers...)),
+		handler.NewZipkinSpanHandler(
+			b.Logger,
+			spanProcessor,
+			zs.NewChainedSanitizer(zs.NewStandardSanitizers()...),
+		),
 		handler.NewJaegerSpanHandler(b.Logger, spanProcessor),
-		handler.NewGRPCHandler(b.Logger, spanProcessor),
+		handler.NewGRPCHandler(b.Logger, spanProcessor, b.TenancyMgr),
 	}
 }
 

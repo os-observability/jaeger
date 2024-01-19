@@ -22,24 +22,30 @@ import (
 	"github.com/jaegertracing/jaeger/pkg/es"
 )
 
-//go:embed *.json
 // MAPPINGS contains embedded index templates.
+//
+//go:embed *.json
 var MAPPINGS embed.FS
 
 // MappingBuilder holds parameters required to render an elasticsearch index template
 type MappingBuilder struct {
-	TemplateBuilder es.TemplateBuilder
-	Shards          int64
-	Replicas        int64
-	EsVersion       uint
-	IndexPrefix     string
-	UseILM          bool
-	ILMPolicyName   string
+	TemplateBuilder              es.TemplateBuilder
+	Shards                       int64
+	Replicas                     int64
+	PrioritySpanTemplate         int64
+	PriorityServiceTemplate      int64
+	PriorityDependenciesTemplate int64
+	EsVersion                    uint
+	IndexPrefix                  string
+	UseILM                       bool
+	ILMPolicyName                string
 }
 
 // GetMapping returns the rendered mapping based on elasticsearch version
 func (mb *MappingBuilder) GetMapping(mapping string) (string, error) {
-	if mb.EsVersion == 7 {
+	if mb.EsVersion == 8 {
+		return mb.fixMapping(mapping + "-8.json")
+	} else if mb.EsVersion == 7 {
 		return mb.fixMapping(mapping + "-7.json")
 	}
 	return mb.fixMapping(mapping + ".json")
@@ -69,7 +75,6 @@ func loadMapping(name string) string {
 }
 
 func (mb *MappingBuilder) fixMapping(mapping string) (string, error) {
-
 	tmpl, err := mb.TemplateBuilder.Parse(loadMapping(mapping))
 	if err != nil {
 		return "", err

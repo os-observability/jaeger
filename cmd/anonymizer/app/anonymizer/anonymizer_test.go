@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/model"
@@ -81,7 +82,7 @@ func TestNew(t *testing.T) {
 	tempDir := t.TempDir()
 
 	file, err := os.CreateTemp(tempDir, "mapping.json")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	_, err = file.Write([]byte(`
 {
@@ -93,7 +94,7 @@ func TestNew(t *testing.T) {
 	}
 }
 `))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	anonymizer := New(file.Name(), Options{}, nopLogger)
 	assert.NotNil(t, anonymizer)
@@ -153,7 +154,7 @@ func TestAnonymizer_Hash(t *testing.T) {
 	data := "foobar"
 	expected := "340d8765a4dda9c2"
 	actual := hash(data)
-	assert.Equal(t, actual, expected)
+	assert.Equal(t, expected, actual)
 }
 
 func TestAnonymizer_AnonymizeSpan_AllTrue(t *testing.T) {
@@ -170,9 +171,9 @@ func TestAnonymizer_AnonymizeSpan_AllTrue(t *testing.T) {
 		},
 	}
 	_ = anonymizer.AnonymizeSpan(span1)
-	assert.Equal(t, 3, len(span1.Tags))
-	assert.Equal(t, 1, len(span1.Logs))
-	assert.Equal(t, 3, len(span1.Process.Tags))
+	assert.Len(t, span1.Tags, 3)
+	assert.Len(t, span1.Logs, 1)
+	assert.Len(t, span1.Process.Tags, 3)
 }
 
 func TestAnonymizer_AnonymizeSpan_AllFalse(t *testing.T) {
@@ -189,9 +190,9 @@ func TestAnonymizer_AnonymizeSpan_AllFalse(t *testing.T) {
 		},
 	}
 	_ = anonymizer.AnonymizeSpan(span2)
-	assert.Equal(t, 2, len(span2.Tags))
-	assert.Equal(t, 0, len(span2.Logs))
-	assert.Equal(t, 0, len(span2.Process.Tags))
+	assert.Len(t, span2.Tags, 2)
+	assert.Empty(t, span2.Logs)
+	assert.Empty(t, span2.Process.Tags)
 }
 
 func TestAnonymizer_MapString_Present(t *testing.T) {

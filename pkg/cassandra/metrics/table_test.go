@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
@@ -121,10 +122,10 @@ func TestTableExec(t *testing.T) {
 		}
 		err := tm.Exec(tc.q, useLogger)
 		if tc.q.err == nil {
-			assert.NoError(t, err)
-			assert.Len(t, logBuf.Bytes(), 0)
+			require.NoError(t, err)
+			assert.Empty(t, logBuf.Bytes())
 		} else {
-			assert.Error(t, err, tc.q.err.Error())
+			require.Error(t, err, tc.q.err.Error())
 			if tc.log {
 				assert.Equal(t, map[string]string{
 					"level": "error",
@@ -133,7 +134,7 @@ func TestTableExec(t *testing.T) {
 					"error": "failed",
 				}, logBuf.JSONLine(0))
 			} else {
-				assert.Len(t, logBuf.Bytes(), 0)
+				assert.Empty(t, logBuf.Bytes())
 			}
 		}
 		counts, _ := mf.Snapshot()
@@ -156,4 +157,8 @@ func (q insertQuery) String() string {
 
 func (q insertQuery) ScanCAS(dest ...interface{}) (bool, error) {
 	return true, nil
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

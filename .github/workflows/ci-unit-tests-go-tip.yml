@@ -1,0 +1,65 @@
+name: Unit Tests on Go Tip
+
+on:
+  push:
+    branches: [main]
+
+# See https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions
+permissions:  # added using https://github.com/step-security/secure-workflows
+  contents: read
+  checks: write
+
+jobs:
+  unit-tests-go-tip:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+    - name: Install Go Tip
+      uses: ./.github/actions/setup-go-tip
+
+    - name: Install test deps
+      # even though the same target runs from test-ci, running it separately makes for cleaner log in GH workflow
+      run: make install-test-tools
+
+    - name: Run unit tests
+      run: make test-ci
+
+    - name: Prepare unit tests report
+      if: always()
+      run: make test-report
+
+    - name: Publish Unit Test Summary 📑
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        check_name: Go Tip Unit Tests Summary
+        junit_files: junit-report.xml
+        # This workflow isn't run during Pull Requests, so check run and PR comment summaries are not needed.
+        check_run: false
+        comment_mode: off
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Test Results
+        path: junit-report.xml
+
+    - name: Lint
+      run: echo skip linting on Go tip
+
+  event-file:
+    name: "Event File"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Event File
+          path: ${{ github.event_path }}

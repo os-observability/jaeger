@@ -22,19 +22,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
-	"github.com/jaegertracing/jaeger/thrift-gen/sampling"
 )
 
 type mockSamplingStore struct{}
 
-func (s mockSamplingStore) GetSamplingStrategy(ctx context.Context, serviceName string) (*sampling.SamplingStrategyResponse, error) {
+func (s mockSamplingStore) GetSamplingStrategy(ctx context.Context, serviceName string) (*api_v2.SamplingStrategyResponse, error) {
 	if serviceName == "error" {
 		return nil, errors.New("some error")
 	} else if serviceName == "nil" {
 		return nil, nil
 	}
-	return &sampling.SamplingStrategyResponse{StrategyType: sampling.SamplingStrategyType_PROBABILISTIC}, nil
+	return &api_v2.SamplingStrategyResponse{StrategyType: api_v2.SamplingStrategyType_PROBABILISTIC}, nil
 }
 
 func TestNewGRPCHandler(t *testing.T) {
@@ -51,11 +51,15 @@ func TestNewGRPCHandler(t *testing.T) {
 	for _, test := range tests {
 		resp, err := h.GetSamplingStrategy(context.Background(), test.req)
 		if test.err != "" {
-			assert.EqualError(t, err, test.err)
+			require.EqualError(t, err, test.err)
 			require.Nil(t, resp)
 		} else {
 			require.NoError(t, err)
 			assert.Equal(t, test.resp, resp)
 		}
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -18,6 +18,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 type testAddr struct {
@@ -60,9 +63,19 @@ func TestGetPort(t *testing.T) {
 	for _, c := range cases {
 		port, err := GetPort(&c.address)
 		if c.expectedError != "" {
-			assert.EqualError(t, err, c.expectedError)
+			require.EqualError(t, err, c.expectedError)
 		} else {
 			assert.Equal(t, c.expected, port)
 		}
 	}
+}
+
+func TestFixLocalhost(t *testing.T) {
+	endpoints := []string{"collector:1111", ":2222"}
+	fixed := FixLocalhost(endpoints)
+	assert.Equal(t, []string{"collector:1111", "localhost:2222"}, fixed)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

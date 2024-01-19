@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 //go:embed test_assets/*
@@ -44,4 +46,8 @@ func TestPrefixedFS(t *testing.T) {
 			require.Equal(t, tt.isDir, stat.IsDir())
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

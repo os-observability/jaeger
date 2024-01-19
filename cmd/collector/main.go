@@ -23,18 +23,20 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
-	jexpvar "github.com/uber/jaeger-lib/metrics/expvar"
-	"github.com/uber/jaeger-lib/metrics/fork"
 	_ "go.uber.org/automaxprocs"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app"
-	"github.com/jaegertracing/jaeger/cmd/docs"
-	"github.com/jaegertracing/jaeger/cmd/env"
-	"github.com/jaegertracing/jaeger/cmd/flags"
-	"github.com/jaegertracing/jaeger/cmd/status"
+	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
+	"github.com/jaegertracing/jaeger/cmd/internal/docs"
+	"github.com/jaegertracing/jaeger/cmd/internal/env"
+	cmdFlags "github.com/jaegertracing/jaeger/cmd/internal/flags"
+	"github.com/jaegertracing/jaeger/cmd/internal/status"
+	"github.com/jaegertracing/jaeger/internal/metrics/expvar"
+	"github.com/jaegertracing/jaeger/internal/metrics/fork"
 	"github.com/jaegertracing/jaeger/pkg/config"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/pkg/version"
 	ss "github.com/jaegertracing/jaeger/plugin/sampling/strategystore"
 	"github.com/jaegertracing/jaeger/plugin/storage"
@@ -44,13 +46,13 @@ import (
 const serviceName = "jaeger-collector"
 
 func main() {
-	svc := flags.NewService(ports.CollectorAdminHTTP)
+	svc := cmdFlags.NewService(ports.CollectorAdminHTTP)
 
 	storageFactory, err := storage.NewFactory(storage.FactoryConfigFromEnvAndCLI(os.Args, os.Stderr))
 	if err != nil {
 		log.Fatalf("Cannot initialize storage factory: %v", err)
 	}
-	strategyStoreFactoryConfig, err := ss.FactoryConfigFromEnv(os.Stderr)
+	strategyStoreFactoryConfig, err := ss.FactoryConfigFromEnv()
 	if err != nil {
 		log.Fatalf("Cannot initialize sampling strategy store factory config: %v", err)
 	}
@@ -71,7 +73,7 @@ func main() {
 			logger := svc.Logger // shortcut
 			baseFactory := svc.MetricsFactory.Namespace(metrics.NSOptions{Name: "jaeger"})
 			metricsFactory := fork.New("internal",
-				jexpvar.NewFactory(10), // backend for internal opts
+				expvar.NewFactory(10), // backend for internal opts
 				baseFactory.Namespace(metrics.NSOptions{Name: "collector"}))
 			version.NewInfoMetrics(metricsFactory)
 
@@ -97,7 +99,13 @@ func main() {
 			if err != nil {
 				logger.Fatal("Failed to create sampling strategy store", zap.Error(err))
 			}
-			c := app.New(&app.CollectorParams{
+			collectorOpts, err := new(flags.CollectorOptions).InitFromViper(v, logger)
+			if err != nil {
+				logger.Fatal("Failed to initialize collector", zap.Error(err))
+			}
+			tm := tenancy.NewManager(&collectorOpts.GRPC.Tenancy)
+
+			collector := app.New(&app.CollectorParams{
 				ServiceName:    serviceName,
 				Logger:         logger,
 				MetricsFactory: metricsFactory,
@@ -105,14 +113,15 @@ func main() {
 				StrategyStore:  strategyStore,
 				Aggregator:     aggregator,
 				HealthCheck:    svc.HC(),
+				TenancyMgr:     tm,
 			})
-			collectorOpts := new(app.CollectorOptions).InitFromViper(v)
-			if err := c.Start(collectorOpts); err != nil {
+			// Start all Collector services
+			if err := collector.Start(collectorOpts); err != nil {
 				logger.Fatal("Failed to start collector", zap.Error(err))
 			}
-
+			// Wait for shutdown
 			svc.RunAndThen(func() {
-				if err := c.Close(); err != nil {
+				if err := collector.Close(); err != nil {
 					logger.Error("failed to cleanly close the collector", zap.Error(err))
 				}
 				if closer, ok := spanWriter.(io.Closer); ok {
@@ -124,7 +133,6 @@ func main() {
 				if err := storageFactory.Close(); err != nil {
 					logger.Error("Failed to close storage factory", zap.Error(err))
 				}
-
 			})
 			return nil
 		},
@@ -139,7 +147,7 @@ func main() {
 		v,
 		command,
 		svc.AddFlags,
-		app.AddFlags,
+		flags.AddFlags,
 		storageFactory.AddPipelineFlags,
 		strategyStoreFactory.AddFlags,
 	)

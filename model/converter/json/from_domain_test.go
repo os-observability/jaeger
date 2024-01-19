@@ -64,7 +64,7 @@ func TestMarshalJSON(t *testing.T) {
 	require.NoError(t, jsonpb.Unmarshal(bb, &trace2))
 	trace1.NormalizeTimestamps()
 	trace2.NormalizeTimestamps()
-	assert.Equal(t, trace1, &trace2)
+	assert.Equal(t, &trace2, trace1)
 }
 
 func TestFromDomain(t *testing.T) {
@@ -139,8 +139,8 @@ func testJSONEncoding(t *testing.T, i int, expectedStr []byte, object interface{
 	require.NoError(t, enc.Encode(object))
 
 	if !assert.Equal(t, string(expectedStr), buf.String()) {
-		err := os.WriteFile(outFile+"-actual.json", buf.Bytes(), 0644)
-		assert.NoError(t, err)
+		err := os.WriteFile(outFile+"-actual.json", buf.Bytes(), 0o644)
+		require.NoError(t, err)
 	}
 }
 

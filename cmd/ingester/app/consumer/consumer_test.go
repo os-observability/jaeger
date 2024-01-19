@@ -27,14 +27,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
 
 	kmocks "github.com/jaegertracing/jaeger/cmd/ingester/app/consumer/mocks"
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/processor"
 	pmocks "github.com/jaegertracing/jaeger/cmd/ingester/app/processor/mocks"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/kafka/consumer"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
 //go:generate mockery -dir ../../../../pkg/kafka/config/ -name Consumer
@@ -48,7 +48,7 @@ const (
 
 func TestConstructor(t *testing.T) {
 	newConsumer, err := New(Params{MetricsFactory: metrics.NullFactory})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, newConsumer)
 }
 
@@ -79,6 +79,7 @@ func newSaramaClusterConsumer(saramaPartitionConsumer sarama.PartitionConsumer, 
 	saramaClusterConsumer.On("Partitions").Return((<-chan cluster.PartitionConsumer)(pcha))
 	saramaClusterConsumer.On("Close").Return(nil).Run(func(args mock.Arguments) {
 		mc.Close()
+		close(pcha)
 	})
 	saramaClusterConsumer.On("MarkPartitionOffset", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	return saramaClusterConsumer
@@ -89,15 +90,14 @@ func newConsumer(
 	metricsFactory metrics.Factory,
 	topic string,
 	processor processor.SpanProcessor,
-	consumer consumer.Consumer) *Consumer {
-
+	consumer consumer.Consumer,
+) *Consumer {
 	logger, _ := zap.NewDevelopment()
 	consumerParams := Params{
 		MetricsFactory:   metricsFactory,
 		Logger:           logger,
 		InternalConsumer: consumer,
 		ProcessorFactory: ProcessorFactory{
-			topic:          topic,
 			consumer:       consumer,
 			metricsFactory: metricsFactory,
 			logger:         logger,
@@ -172,25 +172,33 @@ func TestSaramaConsumerWrapper_start_Messages(t *testing.T) {
 		Value: 0,
 	})
 
-	partitionTag := map[string]string{"partition": fmt.Sprint(partition)}
+	tags := map[string]string{
+		"topic":     topic,
+		"partition": fmt.Sprint(partition),
+	}
 	localFactory.AssertCounterMetrics(t, metricstest.ExpectedMetric{
 		Name:  "sarama-consumer.messages",
-		Tags:  partitionTag,
+		Tags:  tags,
 		Value: 1,
 	})
 	localFactory.AssertGaugeMetrics(t, metricstest.ExpectedMetric{
 		Name:  "sarama-consumer.current-offset",
-		Tags:  partitionTag,
-		Value: 1,
+		Tags:  tags,
+		Value: int(msgOffset),
 	})
 	localFactory.AssertGaugeMetrics(t, metricstest.ExpectedMetric{
-		Name:  "sarama-consumer.offset-lag",
-		Tags:  partitionTag,
-		Value: 0,
+		Name: "sarama-consumer.offset-lag",
+		Tags: tags,
+		// Prior to sarama v1.31.0 this would be 0, it's unclear why this changed.
+		// v=1 seems to be correct because high watermark in mock is incremented upon
+		// consuming the message, and func HighWaterMarkOffset() returns internal value
+		// (already incremented) + 1, so the difference is always 2, and we then
+		// subtract 1 from it.
+		Value: 1,
 	})
 	localFactory.AssertCounterMetrics(t, metricstest.ExpectedMetric{
 		Name:  "sarama-consumer.partition-start",
-		Tags:  partitionTag,
+		Tags:  tags,
 		Value: 1,
 	})
 }
@@ -218,10 +226,13 @@ func TestSaramaConsumerWrapper_start_Errors(t *testing.T) {
 			continue
 		}
 
-		partitionTag := map[string]string{"partition": fmt.Sprint(partition)}
+		tags := map[string]string{
+			"topic":     topic,
+			"partition": fmt.Sprint(partition),
+		}
 		localFactory.AssertCounterMetrics(t, metricstest.ExpectedMetric{
 			Name:  "sarama-consumer.errors",
-			Tags:  partitionTag,
+			Tags:  tags,
 			Value: 1,
 		})
 		undertest.Close()
@@ -250,7 +261,7 @@ func TestHandleClosePartition(t *testing.T) {
 		undertest.deadlockDetector.allPartitionsDeadlockDetector.incrementMsgCount() // Don't trigger panic on all partitions detector
 		time.Sleep(100 * time.Millisecond)
 		c, _ := metricsFactory.Snapshot()
-		if c["sarama-consumer.partition-close|partition=316"] == 1 {
+		if c["sarama-consumer.partition-close|partition=316|topic=morekuzambu"] == 1 {
 			return
 		}
 	}

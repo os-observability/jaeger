@@ -20,9 +20,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/crossdock/crossdock-go/assert"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
@@ -41,7 +41,6 @@ func (a *dummyAction) Do() error {
 }
 
 func TestExecuteAction(t *testing.T) {
-
 	tests := []struct {
 		name                  string
 		flags                 []string
@@ -92,7 +91,8 @@ func TestExecuteAction(t *testing.T) {
 			tlsFlags.AddFlags(flags)
 			command.PersistentFlags().AddGoFlagSet(flags)
 			v.BindPFlags(command.PersistentFlags())
-			err := command.ParseFlags(test.flags)
+			cmdLine := append([]string{"--es.tls.enabled=true"}, test.flags...)
+			err := command.ParseFlags(cmdLine)
 			require.NoError(t, err)
 			executedAction := false
 			err = ExecuteAction(ActionExecuteOptions{
@@ -104,7 +104,7 @@ func TestExecuteAction(t *testing.T) {
 				assert.Equal(t, "https://localhost:9300", c.Endpoint)
 				transport, ok := c.Client.Transport.(*http.Transport)
 				require.True(t, ok)
-				assert.Equal(t, true, transport.TLSClientConfig.InsecureSkipVerify)
+				assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
 				return &dummyAction{
 					TestFn: func() error {
 						executedAction = true
@@ -115,7 +115,7 @@ func TestExecuteAction(t *testing.T) {
 
 			assert.Equal(t, test.expectedExecuteAction, executedAction)
 			if test.configError {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
 				assert.Equal(t, test.expectedError, err)
 			}

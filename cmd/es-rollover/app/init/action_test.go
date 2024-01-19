@@ -20,8 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crossdock/crossdock-go/assert"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/cmd/es-rollover/app"
 	"github.com/jaegertracing/jaeger/pkg/es/client"
@@ -86,6 +87,7 @@ func TestIndexCreateIfNotExist(t *testing.T) {
 		})
 	}
 }
+
 func TestRolloverAction(t *testing.T) {
 	tests := []struct {
 		name                  string
@@ -93,7 +95,6 @@ func TestRolloverAction(t *testing.T) {
 		config                Config
 		expectedErr           error
 	}{
-
 		{
 			name: "Unsupported version",
 			setupCallExpectations: func(indexClient *mocks.MockIndexAPI, clusterClient *mocks.MockClusterAPI, ilmClient *mocks.MockILMAPI) {
@@ -211,7 +212,6 @@ func TestRolloverAction(t *testing.T) {
 					{Index: "jaeger-span-archive-000001", Name: "jaeger-span-archive-read", IsWriteIndex: false},
 					{Index: "jaeger-span-archive-000001", Name: "jaeger-span-archive-write", IsWriteIndex: false},
 				}).Return(nil)
-
 			},
 			expectedErr: nil,
 			config: Config{
@@ -233,7 +233,6 @@ func TestRolloverAction(t *testing.T) {
 					{Index: "jaeger-span-archive-000001", Name: "jaeger-span-archive-read", IsWriteIndex: false},
 					{Index: "jaeger-span-archive-000001", Name: "jaeger-span-archive-write", IsWriteIndex: true},
 				}).Return(nil)
-
 			},
 			expectedErr: nil,
 			config: Config{
@@ -262,7 +261,7 @@ func TestRolloverAction(t *testing.T) {
 
 			err := initAction.Do()
 			if test.expectedErr != nil {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Equal(t, test.expectedErr, err)
 			}
 

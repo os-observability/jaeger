@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/es-rollover/app"
@@ -89,7 +90,6 @@ func TestLookBackAction(t *testing.T) {
 						Name:  "jaeger-span-archive-read",
 					},
 				}).Return(nil)
-
 			},
 			config: Config{
 				Unit:      "days",
@@ -148,7 +148,7 @@ func TestLookBackAction(t *testing.T) {
 
 			err := lookbackAction.Do()
 			if test.expectedErr != nil {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Equal(t, test.expectedErr, err)
 			}
 		})

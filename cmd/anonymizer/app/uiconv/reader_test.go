@@ -15,7 +15,6 @@
 package uiconv
 
 import (
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,19 +22,16 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestReader_TraceSuccess(t *testing.T) {
+func TestReaderTraceSuccess(t *testing.T) {
 	inputFile := "fixtures/trace_success.json"
-	r, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	r, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
 	s1, err := r.NextSpan()
 	require.NoError(t, err)
 	assert.Equal(t, "a071653098f9250d", s1.OperationName)
 	assert.Equal(t, 1, r.spansRead)
-	assert.Equal(t, false, r.eofReached)
+	assert.False(t, r.eofReached)
 
 	r.spansRead = 999
 
@@ -43,61 +39,49 @@ func TestReader_TraceSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "471418097747d04a", s2.OperationName)
 	assert.Equal(t, 1000, r.spansRead)
-	assert.Equal(t, true, r.eofReached)
+	assert.True(t, r.eofReached)
 
 	_, err = r.NextSpan()
-	require.Equal(t, io.EOF, err)
+	require.Equal(t, errNoMoreSpans, err)
 	assert.Equal(t, 1000, r.spansRead)
-	assert.Equal(t, true, r.eofReached)
+	assert.True(t, r.eofReached)
 }
 
-func TestReader_TraceNonExistent(t *testing.T) {
+func TestReaderTraceNonExistent(t *testing.T) {
 	inputFile := "fixtures/trace_non_existent.json"
-	_, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	_, err := newSpanReader(inputFile, zap.NewNop())
 	require.Contains(t, err.Error(), "cannot open captured file")
 }
 
-func TestReader_TraceEmpty(t *testing.T) {
+func TestReaderTraceEmpty(t *testing.T) {
 	inputFile := "fixtures/trace_empty.json"
-	r, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	r, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
 	_, err = r.NextSpan()
 	require.Contains(t, err.Error(), "cannot read file")
 	assert.Equal(t, 0, r.spansRead)
-	assert.Equal(t, true, r.eofReached)
+	assert.True(t, r.eofReached)
 }
 
-func TestReader_TraceWrongFormat(t *testing.T) {
+func TestReaderTraceWrongFormat(t *testing.T) {
 	inputFile := "fixtures/trace_wrong_format.json"
-	r, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	r, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
 	_, err = r.NextSpan()
 	require.Equal(t, "file must begin with '['", err.Error())
 	assert.Equal(t, 0, r.spansRead)
-	assert.Equal(t, true, r.eofReached)
+	assert.True(t, r.eofReached)
 }
 
-func TestReader_TraceInvalidJson(t *testing.T) {
+func TestReaderTraceInvalidJson(t *testing.T) {
 	inputFile := "fixtures/trace_invalid_json.json"
-	r, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	r, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
 	_, err = r.NextSpan()
 	require.Contains(t, err.Error(), "cannot unmarshal span")
 	assert.Equal(t, 0, r.spansRead)
-	assert.Equal(t, true, r.eofReached)
+	assert.True(t, r.eofReached)
 }

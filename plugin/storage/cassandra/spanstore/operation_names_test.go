@@ -23,9 +23,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/cassandra/mocks"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/cassandra/spanstore/dbmodel"
@@ -43,8 +44,8 @@ type operationNameStorageTest struct {
 
 func withOperationNamesStorage(writeCacheTTL time.Duration,
 	schemaVersion schemaVersion,
-	fn func(s *operationNameStorageTest)) {
-
+	fn func(s *operationNameStorageTest),
+) {
 	session := &mocks.Session{}
 	logger, logBuffer := testutils.NewLogger()
 	metricsFactory := metricstest.NewFactory(0)
@@ -81,7 +82,7 @@ func TestOperationNamesStorageWrite(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			withOperationNamesStorage(test.ttl, test.schemaVersion, func(s *operationNameStorageTest) {
-				var execError = errors.New("exec error")
+				execError := errors.New("exec error")
 				query := &mocks.Query{}
 				query1 := &mocks.Query{}
 				query2 := &mocks.Query{}
@@ -104,13 +105,13 @@ func TestOperationNamesStorageWrite(t *testing.T) {
 					ServiceName:   "service-a",
 					OperationName: "Operation-b",
 				})
-				assert.NoError(t, err)
+				require.NoError(t, err)
 
 				err = s.storage.Write(dbmodel.Operation{
 					ServiceName:   "service-c",
 					OperationName: "operation-d",
 				})
-				assert.EqualError(t, err,
+				require.EqualError(t, err,
 					"failed to Exec query 'select from "+
 						schemas[test.schemaVersion].tableName+
 						"': exec error")
@@ -133,7 +134,7 @@ func TestOperationNamesStorageWrite(t *testing.T) {
 					ServiceName:   "service-a",
 					OperationName: "Operation-b",
 				})
-				assert.NoError(t, err)
+				require.NoError(t, err)
 
 				counts2, _ := s.metricsFactory.Snapshot()
 				expCounts := counts
@@ -149,7 +150,7 @@ func TestOperationNamesStorageWrite(t *testing.T) {
 }
 
 func TestOperationNamesStorageGetServices(t *testing.T) {
-	var scanError = errors.New("scan error")
+	scanError := errors.New("scan error")
 	for _, test := range []struct {
 		name          string
 		schemaVersion schemaVersion
@@ -185,12 +186,12 @@ func TestOperationNamesStorageGetServices(t *testing.T) {
 					ServiceName: "service-a",
 				})
 				if test.expErr == nil {
-					assert.NoError(t, err)
+					require.NoError(t, err)
 					// expect one empty operation result
 					// because mock iter.Scan(&placeholder) does not write to `placeholder`
 					assert.Equal(t, []spanstore.Operation{{}}, services)
 				} else {
-					assert.EqualError(
+					require.EqualError(
 						t,
 						err,
 						fmt.Sprintf("error reading %s from storage: %s",
@@ -200,7 +201,5 @@ func TestOperationNamesStorageGetServices(t *testing.T) {
 				}
 			})
 		})
-
 	}
-
 }

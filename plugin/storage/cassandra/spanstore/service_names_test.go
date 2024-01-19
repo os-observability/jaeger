@@ -23,9 +23,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/cassandra/mocks"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
@@ -60,7 +61,7 @@ func TestServiceNamesStorageWrite(t *testing.T) {
 		writeCacheTTL := ttl // capture loop var
 		t.Run(fmt.Sprintf("writeCacheTTL=%v", writeCacheTTL), func(t *testing.T) {
 			withServiceNamesStorage(writeCacheTTL, func(s *serviceNameStorageTest) {
-				var execError = errors.New("exec error")
+				execError := errors.New("exec error")
 				query := &mocks.Query{}
 				query1 := &mocks.Query{}
 				query2 := &mocks.Query{}
@@ -74,9 +75,9 @@ func TestServiceNamesStorageWrite(t *testing.T) {
 				s.session.On("Query", mock.AnythingOfType("string"), emptyArgs).Return(query)
 
 				err := s.storage.Write("service-a")
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				err = s.storage.Write("service-b")
-				assert.EqualError(t, err, "failed to Exec query 'select from service_names': exec error")
+				require.EqualError(t, err, "failed to Exec query 'select from service_names': exec error")
 				assert.Equal(t, map[string]string{
 					"level": "error",
 					"msg":   "Failed to exec query",
@@ -91,7 +92,7 @@ func TestServiceNamesStorageWrite(t *testing.T) {
 
 				// write again
 				err = s.storage.Write("service-a")
-				assert.NoError(t, err)
+				require.NoError(t, err)
 
 				counts2, _ := s.metricsFactory.Snapshot()
 				expCounts := counts
@@ -107,7 +108,7 @@ func TestServiceNamesStorageWrite(t *testing.T) {
 }
 
 func TestServiceNamesStorageGetServices(t *testing.T) {
-	var scanError = errors.New("scan error")
+	scanError := errors.New("scan error")
 	var writeCacheTTL time.Duration
 	var matched bool
 	matchOnce := mock.MatchedBy(func(v []interface{}) bool {
@@ -133,14 +134,12 @@ func TestServiceNamesStorageGetServices(t *testing.T) {
 
 			services, err := s.storage.GetServices()
 			if expErr == nil {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				// expect empty string because mock iter.Scan(&placeholder) does not write to `placeholder`
 				assert.Equal(t, []string{""}, services)
 			} else {
-				assert.EqualError(t, err, "error reading service_names from storage: "+expErr.Error())
+				require.EqualError(t, err, "error reading service_names from storage: "+expErr.Error())
 			}
 		})
-
 	}
-
 }

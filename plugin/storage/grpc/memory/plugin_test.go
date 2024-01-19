@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/memory"
 )
 
@@ -31,7 +32,11 @@ func TestPluginUsesMemoryStorage(t *testing.T) {
 	assert.Equal(t, mainStorage, memStorePlugin.DependencyReader())
 	assert.Equal(t, mainStorage, memStorePlugin.SpanReader())
 	assert.Equal(t, mainStorage, memStorePlugin.SpanWriter())
+	assert.Equal(t, mainStorage, memStorePlugin.StreamingSpanWriter())
 	assert.Equal(t, archiveStorage, memStorePlugin.ArchiveSpanReader())
 	assert.Equal(t, archiveStorage, memStorePlugin.ArchiveSpanWriter())
+}
 
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

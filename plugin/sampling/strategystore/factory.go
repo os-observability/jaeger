@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sampling/strategystore"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/plugin"
 	"github.com/jaegertracing/jaeger/plugin/sampling/strategystore/adaptive"
 	"github.com/jaegertracing/jaeger/plugin/sampling/strategystore/static"
@@ -37,7 +37,10 @@ const (
 	samplingTypeFile     = "file"
 )
 
+// AllSamplingTypes lists all types of sampling factories.
 var AllSamplingTypes = []string{samplingTypeFile, samplingTypeAdaptive}
+
+var _ plugin.Configurable = (*Factory)(nil)
 
 // Factory implements strategystore.Factory interface as a meta-factory for strategy storage components.
 type Factory struct {

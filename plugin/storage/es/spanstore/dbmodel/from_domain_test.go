@@ -72,8 +72,8 @@ func testJSONEncoding(t *testing.T, i int, expectedStr []byte, object interface{
 	require.NoError(t, enc.Encode(object))
 
 	if !assert.Equal(t, string(expectedStr), buf.String()) {
-		err := os.WriteFile(outFile+"-actual.json", buf.Bytes(), 0644)
-		assert.NoError(t, err)
+		err := os.WriteFile(outFile+"-actual.json", buf.Bytes(), 0o644)
+		require.NoError(t, err)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestEmptyTags(t *testing.T) {
 	span := model.Span{Tags: tags, Process: &model.Process{Tags: tags}}
 	converter := NewFromDomain(false, nil, ":")
 	dbSpan := converter.FromDomainEmbedProcess(&span)
-	assert.Equal(t, 0, len(dbSpan.Tags))
-	assert.Equal(t, 0, len(dbSpan.Tag))
+	assert.Empty(t, dbSpan.Tags)
+	assert.Empty(t, dbSpan.Tag)
 }
 
 func TestTagMap(t *testing.T) {
@@ -96,9 +96,9 @@ func TestTagMap(t *testing.T) {
 	converter := NewFromDomain(false, []string{"a", "b.b", "b*"}, ":")
 	dbSpan := converter.FromDomainEmbedProcess(&span)
 
-	assert.Equal(t, 1, len(dbSpan.Tags))
+	assert.Len(t, dbSpan.Tags, 1)
 	assert.Equal(t, "foo", dbSpan.Tags[0].Key)
-	assert.Equal(t, 1, len(dbSpan.Process.Tags))
+	assert.Len(t, dbSpan.Process.Tags, 1)
 	assert.Equal(t, "foo", dbSpan.Process.Tags[0].Key)
 
 	tagsMap := map[string]interface{}{}

@@ -17,54 +17,46 @@ package storage
 
 import (
 	"bytes"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func clearEnv() {
-	os.Setenv(SpanStorageTypeEnvVar, "")
-	os.Setenv(DependencyStorageTypeEnvVar, "")
-}
-
 func TestFactoryConfigFromEnv(t *testing.T) {
-	clearEnv()
-	defer clearEnv()
-
 	f := FactoryConfigFromEnvAndCLI(nil, &bytes.Buffer{})
-	assert.Equal(t, 1, len(f.SpanWriterTypes))
+	assert.Len(t, f.SpanWriterTypes, 1)
 	assert.Equal(t, cassandraStorageType, f.SpanWriterTypes[0])
 	assert.Equal(t, cassandraStorageType, f.SpanReaderType)
 	assert.Equal(t, cassandraStorageType, f.DependenciesStorageType)
+	assert.Empty(t, f.SamplingStorageType)
 
-	os.Setenv(SpanStorageTypeEnvVar, elasticsearchStorageType)
-	os.Setenv(DependencyStorageTypeEnvVar, memoryStorageType)
+	t.Setenv(SpanStorageTypeEnvVar, elasticsearchStorageType)
+	t.Setenv(DependencyStorageTypeEnvVar, memoryStorageType)
+	t.Setenv(SamplingStorageTypeEnvVar, cassandraStorageType)
 
 	f = FactoryConfigFromEnvAndCLI(nil, &bytes.Buffer{})
-	assert.Equal(t, 1, len(f.SpanWriterTypes))
+	assert.Len(t, f.SpanWriterTypes, 1)
 	assert.Equal(t, elasticsearchStorageType, f.SpanWriterTypes[0])
 	assert.Equal(t, elasticsearchStorageType, f.SpanReaderType)
 	assert.Equal(t, memoryStorageType, f.DependenciesStorageType)
+	assert.Equal(t, cassandraStorageType, f.SamplingStorageType)
 
-	os.Setenv(SpanStorageTypeEnvVar, elasticsearchStorageType+","+kafkaStorageType)
+	t.Setenv(SpanStorageTypeEnvVar, elasticsearchStorageType+","+kafkaStorageType)
 
 	f = FactoryConfigFromEnvAndCLI(nil, &bytes.Buffer{})
-	assert.Equal(t, 2, len(f.SpanWriterTypes))
+	assert.Len(t, f.SpanWriterTypes, 2)
 	assert.Equal(t, []string{elasticsearchStorageType, kafkaStorageType}, f.SpanWriterTypes)
 	assert.Equal(t, elasticsearchStorageType, f.SpanReaderType)
 
-	os.Setenv(SpanStorageTypeEnvVar, badgerStorageType)
+	t.Setenv(SpanStorageTypeEnvVar, badgerStorageType)
 
 	f = FactoryConfigFromEnvAndCLI(nil, nil)
-	assert.Equal(t, 1, len(f.SpanWriterTypes))
+	assert.Len(t, f.SpanWriterTypes, 1)
 	assert.Equal(t, badgerStorageType, f.SpanWriterTypes[0])
 	assert.Equal(t, badgerStorageType, f.SpanReaderType)
 }
 
 func TestFactoryConfigFromEnvDeprecated(t *testing.T) {
-	clearEnv()
-
 	testCases := []struct {
 		args  []string
 		log   bool
@@ -78,7 +70,7 @@ func TestFactoryConfigFromEnvDeprecated(t *testing.T) {
 	for _, testCase := range testCases {
 		log := new(bytes.Buffer)
 		f := FactoryConfigFromEnvAndCLI(testCase.args, log)
-		assert.Equal(t, 1, len(f.SpanWriterTypes))
+		assert.Len(t, f.SpanWriterTypes, 1)
 		assert.Equal(t, testCase.value, f.SpanWriterTypes[0])
 		assert.Equal(t, testCase.value, f.SpanReaderType)
 		assert.Equal(t, testCase.value, f.DependenciesStorageType)

@@ -19,24 +19,29 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/pkg/config"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
 )
 
 func TestOptionsWithFlags(t *testing.T) {
 	opts := &Options{}
-	v, command := config.Viperize(opts.AddFlags)
+	v, command := config.Viperize(opts.AddFlags, tenancy.AddFlags)
 	err := command.ParseFlags([]string{
 		"--grpc-storage-plugin.binary=noop-grpc-plugin",
 		"--grpc-storage-plugin.configuration-file=config.json",
 		"--grpc-storage-plugin.log-level=debug",
+		"--multi-tenancy.header=x-scope-orgid",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	opts.InitFromViper(v)
 
-	assert.Equal(t, opts.Configuration.PluginBinary, "noop-grpc-plugin")
-	assert.Equal(t, opts.Configuration.PluginConfigurationFile, "config.json")
-	assert.Equal(t, opts.Configuration.PluginLogLevel, "debug")
+	assert.Equal(t, "noop-grpc-plugin", opts.Configuration.PluginBinary)
+	assert.Equal(t, "config.json", opts.Configuration.PluginConfigurationFile)
+	assert.Equal(t, "debug", opts.Configuration.PluginLogLevel)
+	assert.False(t, opts.Configuration.TenancyOpts.Enabled)
+	assert.Equal(t, "x-scope-orgid", opts.Configuration.TenancyOpts.Header)
 }
 
 func TestRemoteOptionsWithFlags(t *testing.T) {
@@ -47,13 +52,13 @@ func TestRemoteOptionsWithFlags(t *testing.T) {
 		"--grpc-storage.tls.enabled=true",
 		"--grpc-storage.connection-timeout=60s",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	opts.InitFromViper(v)
 
-	assert.Equal(t, opts.Configuration.PluginBinary, "")
-	assert.Equal(t, opts.Configuration.RemoteServerAddr, "localhost:2001")
-	assert.Equal(t, opts.Configuration.RemoteTLS.Enabled, true)
-	assert.Equal(t, opts.Configuration.RemoteConnectTimeout, 60*time.Second)
+	assert.Equal(t, "", opts.Configuration.PluginBinary)
+	assert.Equal(t, "localhost:2001", opts.Configuration.RemoteServerAddr)
+	assert.True(t, opts.Configuration.RemoteTLS.Enabled)
+	assert.Equal(t, 60*time.Second, opts.Configuration.RemoteConnectTimeout)
 }
 
 func TestRemoteOptionsNoTLSWithFlags(t *testing.T) {
@@ -64,11 +69,24 @@ func TestRemoteOptionsNoTLSWithFlags(t *testing.T) {
 		"--grpc-storage.tls.enabled=false",
 		"--grpc-storage.connection-timeout=60s",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	opts.InitFromViper(v)
 
-	assert.Equal(t, opts.Configuration.PluginBinary, "")
-	assert.Equal(t, opts.Configuration.RemoteServerAddr, "localhost:2001")
-	assert.Equal(t, opts.Configuration.RemoteTLS.Enabled, false)
-	assert.Equal(t, opts.Configuration.RemoteConnectTimeout, 60*time.Second)
+	assert.Equal(t, "", opts.Configuration.PluginBinary)
+	assert.Equal(t, "localhost:2001", opts.Configuration.RemoteServerAddr)
+	assert.False(t, opts.Configuration.RemoteTLS.Enabled)
+	assert.Equal(t, 60*time.Second, opts.Configuration.RemoteConnectTimeout)
+}
+
+func TestFailedTLSFlags(t *testing.T) {
+	opts := &Options{}
+	v, command := config.Viperize(opts.AddFlags)
+	err := command.ParseFlags([]string{
+		"--grpc-storage.tls.enabled=false",
+		"--grpc-storage.tls.cert=blah", // invalid unless tls.enabled=true
+	})
+	require.NoError(t, err)
+	err = opts.InitFromViper(v)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse gRPC storage TLS options")
 }

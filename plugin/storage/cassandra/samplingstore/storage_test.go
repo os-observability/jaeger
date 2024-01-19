@@ -23,18 +23,17 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sampling/model"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/cassandra/mocks"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/storage/samplingstore"
 )
 
-var (
-	testTime = time.Date(2017, time.January, 24, 11, 15, 17, 12345, time.UTC)
-)
+var testTime = time.Date(2017, time.January, 24, 11, 15, 17, 12345, time.UTC)
 
 type samplingStoreTest struct {
 	session   *mocks.Session
@@ -79,7 +78,7 @@ func TestInsertThroughput(t *testing.T) {
 			},
 		}
 		err := s.store.InsertThroughput(throughput)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		assert.Len(t, args, 3)
 		if _, ok := args[0].(int64); !ok {
@@ -122,7 +121,7 @@ func TestInsertProbabilitiesAndQPS(t *testing.T) {
 		}
 
 		err := s.store.InsertProbabilitiesAndQPS(hostname, probabilities, qps)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		assert.Len(t, args, 4)
 		if d, ok := args[0].(int); ok {
@@ -199,14 +198,15 @@ func TestGetThroughput(t *testing.T) {
 				throughput, err := s.store.GetThroughput(testTime, testTime)
 
 				if testCase.expectedError == "" {
-					assert.NoError(t, err)
+					require.NoError(t, err)
 					assert.Len(t, throughput, 2)
 					assert.Equal(t,
 						model.Throughput{
 							Service:       "svc,withcomma",
 							Operation:     "op,withcomma",
 							Count:         40,
-							Probabilities: map[string]struct{}{"0.1": {}}},
+							Probabilities: map[string]struct{}{"0.1": {}},
+						},
 						*throughput[0],
 					)
 					assert.Equal(t,
@@ -214,11 +214,12 @@ func TestGetThroughput(t *testing.T) {
 							Service:       "svc",
 							Operation:     "op",
 							Count:         50,
-							Probabilities: map[string]struct{}{}},
+							Probabilities: map[string]struct{}{},
+						},
 						*throughput[1],
 					)
 				} else {
-					assert.EqualError(t, err, testCase.expectedError)
+					require.EqualError(t, err, testCase.expectedError)
 				}
 			})
 		})
@@ -277,10 +278,10 @@ func TestGetLatestProbabilities(t *testing.T) {
 				probabilities, err := s.store.GetLatestProbabilities()
 
 				if testCase.expectedError == "" {
-					assert.NoError(t, err)
+					require.NoError(t, err)
 					assert.Equal(t, 0.84, probabilities["svc"]["op"])
 				} else {
-					assert.EqualError(t, err, testCase.expectedError)
+					require.EqualError(t, err, testCase.expectedError)
 				}
 			})
 		})
@@ -321,7 +322,8 @@ func TestStringToThroughput(t *testing.T) {
 			Service:       "svc1",
 			Operation:     "op,1",
 			Count:         1,
-			Probabilities: map[string]struct{}{"0.1": {}, "0.2": {}}},
+			Probabilities: map[string]struct{}{"0.1": {}, "0.2": {}},
+		},
 		*throughput[0],
 	)
 	assert.Equal(t,
@@ -329,7 +331,8 @@ func TestStringToThroughput(t *testing.T) {
 			Service:       "svc2",
 			Operation:     "op2",
 			Count:         2,
-			Probabilities: map[string]struct{}{}},
+			Probabilities: map[string]struct{}{},
+		},
 		*throughput[1],
 	)
 }
@@ -387,4 +390,8 @@ func TestProbabilitiesSetToString(t *testing.T) {
 	s := probabilitiesSetToString(map[string]struct{}{"0.000001": {}, "0.000002": {}})
 	assert.True(t, s == "0.000001,0.000002" || s == "0.000002,0.000001")
 	assert.Equal(t, "", probabilitiesSetToString(nil))
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

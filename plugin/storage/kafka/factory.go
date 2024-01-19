@@ -21,12 +21,20 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/pkg/kafka/producer"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/plugin"
+	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
+)
+
+var ( // interface comformance checks
+	_ storage.Factory     = (*Factory)(nil)
+	_ io.Closer           = (*Factory)(nil)
+	_ plugin.Configurable = (*Factory)(nil)
 )
 
 // Factory implements storage.Factory and creates write-only storage components backed by kafka.
@@ -69,11 +77,6 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 	logger.Info("Kafka factory",
 		zap.Any("producer builder", f.Builder),
 		zap.Any("topic", f.options.Topic))
-	p, err := f.NewProducer(logger)
-	if err != nil {
-		return err
-	}
-	f.producer = p
 	switch f.options.Encoding {
 	case EncodingProto:
 		f.marshaller = newProtobufMarshaller()
@@ -82,6 +85,11 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 	default:
 		return errors.New("kafka encoding is not one of '" + EncodingJSON + "' or '" + EncodingProto + "'")
 	}
+	p, err := f.NewProducer(logger)
+	if err != nil {
+		return err
+	}
+	f.producer = p
 	return nil
 }
 
@@ -104,5 +112,10 @@ var _ io.Closer = (*Factory)(nil)
 
 // Close closes the resources held by the factory
 func (f *Factory) Close() error {
-	return f.options.Config.TLS.Close()
+	var errs []error
+	if f.producer != nil {
+		errs = append(errs, f.producer.Close())
+	}
+	errs = append(errs, f.options.Config.TLS.Close())
+	return errors.Join(errs...)
 }

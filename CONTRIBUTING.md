@@ -34,8 +34,32 @@ git submodule update --init --recursive
 # Installs required tools
 make install-tools
 
-# Runs all unit tests
+# Runs all unit tests:
 make test
+```
+
+### Contributing Code
+
+We accept new changes as pull requests on GitHub. Please make sure the following conditions are met before submitting PRs:
+
+1. Use a named branch in your fork, not the `main` branch, otherwise the CI jobs will fail and we won't be able to merge the PR.
+2. All commits in the PR must be signed (verified by the DCO check on GitHub).
+3. Before submitting a PR, make sure to run:
+```
+make fmt  # commit all changes from auto-format
+make lint
+make test
+```
+
+### Auto-format
+
+We are currently using `gofumpt`, which is installed automatically by `make install-tools` as part of `golangci-lint` installation. We recommend configuring your IDE to run `gofumpt` on file saves, e.g. in VSCode:
+
+```json
+"go.formatTool": "gofumpt",
+"gopls": {
+    "formatting.gofumpt": true,
+}
 ```
 
 ### Running local build with the UI
@@ -76,7 +100,7 @@ github.com/jaegertracing/jaeger
       main.go
   crossdock/                - Cross-repo integration test configuration
   examples/
-      hotrod/               - Demo application that uses OpenTracing API
+      hotrod/               - Demo application that demonstrates the use of tracing instrumentation
   idl/                      - (submodule) https://github.com/jaegertracing/jaeger-idl
   jaeger-ui/                - (submodule) https://github.com/jaegertracing/jaeger-ui
   model/                    - Where models are kept, e.g. Process, Span, Trace
@@ -108,7 +132,7 @@ github.com/jaegertracing/jaeger
 
 ## Imports grouping
 
-This projects follows the following pattern for grouping imports in Go files:
+This project follows the following pattern for grouping imports in Go files:
 
 - imports from standard library
 - imports from other projects
@@ -161,10 +185,7 @@ requires connection to Cassandra
 ```
 
 ## Merging PRs
-Before merging a PR make sure:
-* the title is descriptive and follows [a good commit message](./CONTRIBUTING_GUIDELINES.md)
-* pull request is assigned to the current release milestone
-* add `changelog:*` and other labels
+**For maintainers:** before merging a PR make sure the title is descriptive and follows [a good commit message](./CONTRIBUTING_GUIDELINES.md)
 
 Merge the PR by using "Squash and merge" option on Github. Avoid creating merge commits.
 After the merge make sure referenced issues were closed.
@@ -192,7 +213,7 @@ After the merge make sure referenced issues were closed.
 * Ensure all references to the flag's variables have been removed in code.
 * Ensure a "Breaking Changes" entry is added in the [CHANGELOG](./CHANGELOG.md) indicating which CLI flag
 is being removed and which CLI flag should be used in favor of this removed flag.
-  
+
 For example:
 ```
 * Remove deprecated flags `--old-flag`, please use `--new-flag` ([#1234](<pull-request URL>), [@myusername](https://github.com/myusername))

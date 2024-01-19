@@ -14,8 +14,12 @@
 
 package model
 
-// import "testing"
+import (
+	"testing"
 
-// func TestNothing(t *testing.T) {
-// 	// just get the code coverage
-// }
+	"github.com/jaegertracing/jaeger/pkg/testutils"
+)
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
+}

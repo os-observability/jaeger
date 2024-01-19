@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/model/adjuster"
@@ -45,7 +46,7 @@ func TestSequences(t *testing.T) {
 	}{
 		{
 			adjuster:   adjuster.Sequence(adj, failingAdj, adj, failingAdj),
-			err:        fmt.Sprintf("[%s, %s]", adjErr, adjErr),
+			err:        fmt.Sprintf("%s\n%s", adjErr, adjErr),
 			lastSpanID: 2,
 		},
 		{
@@ -63,6 +64,6 @@ func TestSequences(t *testing.T) {
 
 		assert.True(t, span == adjTrace.Spans[0], "same trace & span returned")
 		assert.EqualValues(t, testCase.lastSpanID, span.SpanID, "expect span ID to be incremented")
-		assert.EqualError(t, err, testCase.err)
+		require.EqualError(t, err, testCase.err)
 	}
 }

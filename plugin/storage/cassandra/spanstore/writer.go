@@ -23,12 +23,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/cassandra"
 	casMetrics "github.com/jaegertracing/jaeger/pkg/cassandra/metrics"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/plugin/storage/cassandra/spanstore/dbmodel"
 )
 
@@ -73,9 +73,11 @@ const (
 	indexFlag
 )
 
-type storageMode uint8
-type serviceNamesWriter func(serviceName string) error
-type operationNamesWriter func(operation dbmodel.Operation) error
+type (
+	storageMode          uint8
+	serviceNamesWriter   func(serviceName string) error
+	operationNamesWriter func(operation dbmodel.Operation) error
+)
 
 type spanWriterMetrics struct {
 	traces                *casMetrics.Table
@@ -177,7 +179,7 @@ func (s *SpanWriter) writeIndexes(span *model.Span, ds *dbmodel.Span) error {
 	spanKind, _ := span.GetSpanKind()
 	if err := s.saveServiceNameAndOperationName(dbmodel.Operation{
 		ServiceName:   ds.ServiceName,
-		SpanKind:      spanKind,
+		SpanKind:      spanKind.String(),
 		OperationName: ds.OperationName,
 	}); err != nil {
 		// should this be a soft failure?
@@ -239,7 +241,7 @@ func (s *SpanWriter) indexByDuration(span *dbmodel.Span, startTime time.Time) er
 	indexByOperationName := func(operationName string) {
 		q1 := query.Bind(span.Process.ServiceName, operationName, timeBucket, span.Duration, span.StartTime, span.TraceID)
 		if err2 := s.writerMetrics.durationIndex.Exec(q1, s.logger); err2 != nil {
-			s.logError(span, err2, "Cannot index duration", s.logger)
+			_ = s.logError(span, err2, "Cannot index duration", s.logger)
 			err = err2
 		}
 	}

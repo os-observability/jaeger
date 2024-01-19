@@ -21,8 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 	. "github.com/jaegertracing/jaeger/storage/spanstore/metrics"
@@ -79,7 +79,8 @@ func checkExpectedExistingAndNonExistentCounters(t *testing.T,
 	expectedCounters,
 	actualGauges map[string]int64,
 	existingKeys,
-	nonExistentKeys []string) {
+	nonExistentKeys []string,
+) {
 	for k, v := range expectedCounters {
 		assert.EqualValues(t, v, actualCounters[k], k)
 	}

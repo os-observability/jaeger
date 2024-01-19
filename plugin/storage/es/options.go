@@ -17,6 +17,7 @@ package es
 
 import (
 	"flag"
+	"log"
 	"strings"
 	"time"
 
@@ -33,11 +34,15 @@ const (
 	suffixSniffer                        = ".sniffer"
 	suffixSnifferTLSEnabled              = ".sniffer-tls-enabled"
 	suffixTokenPath                      = ".token-file"
+	suffixPasswordPath                   = ".password-file"
 	suffixServerURLs                     = ".server-urls"
 	suffixRemoteReadClusters             = ".remote-read-clusters"
 	suffixMaxSpanAge                     = ".max-span-age"
 	suffixNumShards                      = ".num-shards"
 	suffixNumReplicas                    = ".num-replicas"
+	suffixPrioritySpanTemplate           = ".prioirity-span-template"
+	suffixPriorityServiceTemplate        = ".prioirity-service-template"
+	suffixPriorityDependenciesTemplate   = ".prioirity-dependencies-template"
 	suffixBulkSize                       = ".bulk.size"
 	suffixBulkWorkers                    = ".bulk.workers"
 	suffixBulkActions                    = ".bulk.actions"
@@ -92,16 +97,19 @@ type namespaceConfig struct {
 func NewOptions(primaryNamespace string, otherNamespaces ...string) *Options {
 	// TODO all default values should be defined via cobra flags
 	defaultConfig := config.Configuration{
-		Username:          "",
-		Password:          "",
-		Sniffer:           false,
-		MaxSpanAge:        72 * time.Hour,
-		NumShards:         5,
-		NumReplicas:       1,
-		BulkSize:          5 * 1000 * 1000,
-		BulkWorkers:       1,
-		BulkActions:       1000,
-		BulkFlushInterval: time.Millisecond * 200,
+		Username:                     "",
+		Password:                     "",
+		Sniffer:                      false,
+		MaxSpanAge:                   72 * time.Hour,
+		NumShards:                    5,
+		NumReplicas:                  1,
+		PrioritySpanTemplate:         0,
+		PriorityServiceTemplate:      0,
+		PriorityDependenciesTemplate: 0,
+		BulkSize:                     5 * 1000 * 1000,
+		BulkWorkers:                  1,
+		BulkActions:                  1000,
+		BulkFlushInterval:            time.Millisecond * 200,
 		Tags: config.TagsAsFields{
 			DotReplacement: "@",
 		},
@@ -161,6 +169,10 @@ func addFlags(flagSet *flag.FlagSet, nsConfig *namespaceConfig) {
 		nsConfig.namespace+suffixTokenPath,
 		nsConfig.TokenFilePath,
 		"Path to a file containing bearer token. This flag also loads CA if it is specified.")
+	flagSet.String(
+		nsConfig.namespace+suffixPasswordPath,
+		nsConfig.PasswordFilePath,
+		"Path to a file containing password. This file is watched for changes.")
 	flagSet.Bool(
 		nsConfig.namespace+suffixSniffer,
 		nsConfig.Sniffer,
@@ -186,6 +198,18 @@ func addFlags(flagSet *flag.FlagSet, nsConfig *namespaceConfig) {
 		nsConfig.namespace+suffixNumReplicas,
 		nsConfig.NumReplicas,
 		"The number of replicas per index in Elasticsearch")
+	flagSet.Int64(
+		nsConfig.namespace+suffixPrioritySpanTemplate,
+		nsConfig.PrioritySpanTemplate,
+		"Priority of jaeger-span index template (ESv8 only)")
+	flagSet.Int64(
+		nsConfig.namespace+suffixPriorityServiceTemplate,
+		nsConfig.PriorityServiceTemplate,
+		"Priority of jaeger-service index template (ESv8 only)")
+	flagSet.Int64(
+		nsConfig.namespace+suffixPriorityDependenciesTemplate,
+		nsConfig.PriorityDependenciesTemplate,
+		"Priority of jaeger-dependecies index template (ESv8 only)")
 	flagSet.Int(
 		nsConfig.namespace+suffixBulkSize,
 		nsConfig.BulkSize,
@@ -301,12 +325,16 @@ func initFromViper(cfg *namespaceConfig, v *viper.Viper) {
 	cfg.Username = v.GetString(cfg.namespace + suffixUsername)
 	cfg.Password = v.GetString(cfg.namespace + suffixPassword)
 	cfg.TokenFilePath = v.GetString(cfg.namespace + suffixTokenPath)
+	cfg.PasswordFilePath = v.GetString(cfg.namespace + suffixPasswordPath)
 	cfg.Sniffer = v.GetBool(cfg.namespace + suffixSniffer)
 	cfg.SnifferTLSEnabled = v.GetBool(cfg.namespace + suffixSnifferTLSEnabled)
 	cfg.Servers = strings.Split(stripWhiteSpace(v.GetString(cfg.namespace+suffixServerURLs)), ",")
 	cfg.MaxSpanAge = v.GetDuration(cfg.namespace + suffixMaxSpanAge)
 	cfg.NumShards = v.GetInt64(cfg.namespace + suffixNumShards)
 	cfg.NumReplicas = v.GetInt64(cfg.namespace + suffixNumReplicas)
+	cfg.PrioritySpanTemplate = v.GetInt64(cfg.namespace + suffixPrioritySpanTemplate)
+	cfg.PriorityServiceTemplate = v.GetInt64(cfg.namespace + suffixPriorityServiceTemplate)
+	cfg.PriorityDependenciesTemplate = v.GetInt64(cfg.namespace + suffixPriorityDependenciesTemplate)
 	cfg.BulkSize = v.GetInt(cfg.namespace + suffixBulkSize)
 	cfg.BulkWorkers = v.GetInt(cfg.namespace + suffixBulkWorkers)
 	cfg.BulkActions = v.GetInt(cfg.namespace + suffixBulkActions)
@@ -329,7 +357,6 @@ func initFromViper(cfg *namespaceConfig, v *viper.Viper) {
 
 	// TODO: Need to figure out a better way for do this.
 	cfg.AllowTokenFromContext = v.GetBool(bearertoken.StoragePropagationKey)
-	cfg.TLS = cfg.getTLSFlagsConfig().InitFromViper(v)
 
 	remoteReadClusters := stripWhiteSpace(v.GetString(cfg.namespace + suffixRemoteReadClusters))
 	if len(remoteReadClusters) > 0 {
@@ -345,6 +372,13 @@ func initFromViper(cfg *namespaceConfig, v *viper.Viper) {
 
 	// Dependencies calculation should be daily, and this index size is very small
 	cfg.IndexDateLayoutDependencies = initDateLayout(defaultIndexRolloverFrequency, separator)
+
+	var err error
+	cfg.TLS, err = cfg.getTLSFlagsConfig().InitFromViper(v)
+	if err != nil {
+		// TODO refactor to be able to return error
+		log.Fatal(err)
+	}
 }
 
 // GetPrimary returns primary configuration.
@@ -368,7 +402,7 @@ func (opt *Options) Get(namespace string) *config.Configuration {
 
 // stripWhiteSpace removes all whitespace characters from a string
 func stripWhiteSpace(str string) string {
-	return strings.Replace(str, " ", "", -1)
+	return strings.ReplaceAll(str, " ", "")
 }
 
 func initDateLayout(rolloverFreq, sep string) string {

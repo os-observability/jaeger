@@ -15,9 +15,11 @@
 package kafka
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model/converter/thrift/zipkin"
 	"github.com/jaegertracing/jaeger/thrift-gen/zipkincore"
@@ -34,18 +36,18 @@ func TestJSONMarshallerAndUnmarshaller(t *testing.T) {
 func testMarshallerAndUnmarshaller(t *testing.T, marshaller Marshaller, unmarshaller Unmarshaller) {
 	bytes, err := marshaller.Marshal(sampleSpan)
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, bytes)
 
 	resultSpan, err := unmarshaller.Unmarshal(bytes)
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, sampleSpan, resultSpan)
 }
 
 func TestZipkinThriftUnmarshaller(t *testing.T) {
 	operationName := "foo"
-	bytes := zipkin.SerializeThrift([]*zipkincore.Span{
+	bytes := zipkin.SerializeThrift(context.Background(), []*zipkincore.Span{
 		{
 			ID:   12345,
 			Name: operationName,
@@ -57,12 +59,12 @@ func TestZipkinThriftUnmarshaller(t *testing.T) {
 	unmarshaller := NewZipkinThriftUnmarshaller()
 	resultSpan, err := unmarshaller.Unmarshal(bytes)
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, operationName, resultSpan.OperationName)
 }
 
 func TestZipkinThriftUnmarshallerErrorNoService(t *testing.T) {
-	bytes := zipkin.SerializeThrift([]*zipkincore.Span{
+	bytes := zipkin.SerializeThrift(context.Background(), []*zipkincore.Span{
 		{
 			ID:   12345,
 			Name: "foo",
@@ -70,12 +72,12 @@ func TestZipkinThriftUnmarshallerErrorNoService(t *testing.T) {
 	})
 	unmarshaller := NewZipkinThriftUnmarshaller()
 	_, err := unmarshaller.Unmarshal(bytes)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestZipkinThriftUnmarshallerErrorCorrupted(t *testing.T) {
 	bytes := []byte("foo")
 	unmarshaller := NewZipkinThriftUnmarshaller()
 	_, err := unmarshaller.Unmarshal(bytes)
-	assert.Error(t, err)
+	require.Error(t, err)
 }

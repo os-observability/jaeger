@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model"
 )
@@ -115,24 +116,25 @@ func TestKeyValueAsStringAndValue(t *testing.T) {
 	expectedBinaryStr := `42656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f6472696775657320`
 	expectedBinaryStrLossy := `42656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565732042656e6465722042656e64696e6720526f647269677565730a0942656e6465722042656e64696e6720526f647269677565732042656e64...`
 	testCases := []struct {
+		name     string
 		kv       model.KeyValue
 		str      string
 		strLossy string
 		val      interface{}
 	}{
-		{kv: model.String("x", "Bender is great!"), str: "Bender is great!", val: "Bender is great!"},
-		{kv: model.Bool("x", false), str: "false", val: false},
-		{kv: model.Bool("x", true), str: "true", val: true},
-		{kv: model.Int64("x", 3000), str: "3000", val: int64(3000)},
-		{kv: model.Int64("x", -1947), str: "-1947", val: int64(-1947)},
-		{kv: model.Float64("x", 3.14159265359), str: "3.141592654", val: float64(3.14159265359)},
-		{kv: model.Binary("x", []byte("Bender")), str: "42656e646572", val: []byte("Bender")},
-		{kv: model.Binary("x", []byte(longString)), str: expectedBinaryStr, val: []byte(longString)},
-		{kv: model.Binary("x", []byte(longString)), strLossy: expectedBinaryStrLossy, val: []byte(longString)},
+		{name: "Bender is great!", kv: model.String("x", "Bender is great!"), str: "Bender is great!", val: "Bender is great!"},
+		{name: "false", kv: model.Bool("x", false), str: "false", val: false},
+		{name: "true", kv: model.Bool("x", true), str: "true", val: true},
+		{name: "3000", kv: model.Int64("x", 3000), str: "3000", val: int64(3000)},
+		{name: "-1947", kv: model.Int64("x", -1947), str: "-1947", val: int64(-1947)},
+		{name: "3.141592654", kv: model.Float64("x", 3.14159265359), str: "3.141592654", val: float64(3.14159265359)},
+		{name: "42656e646572", kv: model.Binary("x", []byte("Bender")), str: "42656e646572", val: []byte("Bender")},
+		{name: "binary string", kv: model.Binary("x", []byte(longString)), str: expectedBinaryStr, val: []byte(longString)},
+		{name: "binary string (lossy)", kv: model.Binary("x", []byte(longString)), strLossy: expectedBinaryStrLossy, val: []byte(longString)},
 	}
 	for _, tt := range testCases {
 		testCase := tt // capture loop var
-		t.Run(testCase.str, func(t *testing.T) {
+		t.Run(testCase.name, func(t *testing.T) {
 			if testCase.strLossy != "" {
 				assert.Equal(t, testCase.strLossy, testCase.kv.AsStringLossy())
 			} else {
@@ -144,7 +146,7 @@ func TestKeyValueAsStringAndValue(t *testing.T) {
 	t.Run("invalid type", func(t *testing.T) {
 		kv := model.KeyValue{Key: "x", VType: model.ValueType(-1)}
 		assert.Equal(t, "unknown type -1", kv.AsString())
-		assert.EqualError(t, kv.Value().(error), "unknown type -1")
+		require.EqualError(t, kv.Value().(error), "unknown type -1")
 	})
 }
 
@@ -162,7 +164,7 @@ func TestKeyValueHash(t *testing.T) {
 		testCase := tt // capture loop var
 		t.Run(testCase.kv.String(), func(t *testing.T) {
 			out := new(bytes.Buffer)
-			assert.NoError(t, testCase.kv.Hash(out))
+			require.NoError(t, testCase.kv.Hash(out))
 		})
 	}
 }

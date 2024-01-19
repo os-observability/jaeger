@@ -64,7 +64,7 @@ var (
 	// AllEncodings is a list of all supported encodings.
 	AllEncodings = []string{EncodingJSON, EncodingProto, EncodingZipkinThrift}
 
-	//requiredAcks is mapping of sarama supported requiredAcks
+	// requiredAcks is mapping of sarama supported requiredAcks
 	requiredAcks = map[string]sarama.RequiredAcks{
 		"noack": sarama.NoResponse,
 		"local": sarama.WaitForLocal,
@@ -176,7 +176,9 @@ func (opt *Options) AddFlags(flagSet *flag.FlagSet) {
 // InitFromViper initializes Options with properties from viper
 func (opt *Options) InitFromViper(v *viper.Viper) {
 	authenticationOptions := auth.AuthenticationConfig{}
-	authenticationOptions.InitFromViper(configPrefix, v)
+	if err := authenticationOptions.InitFromViper(configPrefix, v); err != nil {
+		log.Fatal(err)
+	}
 
 	requiredAcks, err := getRequiredAcks(v.GetString(configPrefix + suffixRequiredAcks))
 	if err != nil {
@@ -212,7 +214,7 @@ func (opt *Options) InitFromViper(v *viper.Viper) {
 
 // stripWhiteSpace removes all whitespace characters from a string
 func stripWhiteSpace(str string) string {
-	return strings.Replace(str, " ", "", -1)
+	return strings.ReplaceAll(str, " ", "")
 }
 
 // getCompressionLevel to get compression level from compression type
@@ -233,7 +235,7 @@ func getCompressionLevel(mode string, compressionLevel int) (int, error) {
 	return compressionLevel, nil
 }
 
-//getCompressionMode maps input modes to sarama CompressionCodec
+// getCompressionMode maps input modes to sarama CompressionCodec
 func getCompressionMode(mode string) (sarama.CompressionCodec, error) {
 	compressionMode, ok := compressionModes[mode]
 	if !ok {
@@ -243,7 +245,7 @@ func getCompressionMode(mode string) (sarama.CompressionCodec, error) {
 	return compressionMode.compressor, nil
 }
 
-//getRequiredAcks maps input ack values to sarama requiredAcks
+// getRequiredAcks maps input ack values to sarama requiredAcks
 func getRequiredAcks(acks string) (sarama.RequiredAcks, error) {
 	requiredAcks, ok := requiredAcks[strings.ToLower(acks)]
 	if !ok {

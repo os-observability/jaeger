@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model"
 	ui "github.com/jaegertracing/jaeger/model/json"
@@ -319,10 +320,10 @@ func TestGetDependenciesSuccess(t *testing.T) {
 	assert.NotEmpty(t, response.Data)
 	data := response.Data.([]interface{})[0]
 	actual := data.(map[string]interface{})
-	assert.Equal(t, actual["parent"], "killer")
-	assert.Equal(t, actual["child"], "queen")
-	assert.Equal(t, actual["callCount"], 12.00) //recovered type is float
-	assert.NoError(t, err)
+	assert.Equal(t, "killer", actual["parent"])
+	assert.Equal(t, "queen", actual["child"])
+	assert.Equal(t, 12.00, actual["callCount"]) // recovered type is float
+	require.NoError(t, err)
 }
 
 func TestGetDependenciesCassandraFailure(t *testing.T) {
@@ -333,7 +334,7 @@ func TestGetDependenciesCassandraFailure(t *testing.T) {
 
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=1476374248550&service=testing", &response)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestGetDependenciesEndTimeParsingFailure(t *testing.T) {
@@ -342,7 +343,7 @@ func TestGetDependenciesEndTimeParsingFailure(t *testing.T) {
 
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=shazbot&service=testing", &response)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestGetDependenciesLookbackParsingFailure(t *testing.T) {
@@ -351,5 +352,5 @@ func TestGetDependenciesLookbackParsingFailure(t *testing.T) {
 
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=1476374248550&service=testing&lookback=shazbot", &response)
-	assert.Error(t, err)
+	require.Error(t, err)
 }

@@ -17,11 +17,11 @@ package app
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
 	"github.com/jaegertracing/jaeger/model"
@@ -33,18 +33,30 @@ func TestGetArchivedTrace_NotFound(t *testing.T) {
 	mockReader := &spanstoremocks.Reader{}
 	mockReader.On("GetTrace", mock.AnythingOfType("*context.valueCtx"), mock.AnythingOfType("model.TraceID")).
 		Return(nil, spanstore.ErrTraceNotFound).Once()
-	for _, tc := range []spanstore.Reader{nil, mockReader} {
-		archiveReader := tc // capture loop var
-		t.Run(fmt.Sprint(archiveReader), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reader spanstore.Reader
+	}{
+		{
+			name:   "nil",
+			reader: nil,
+		},
+		{
+			name:   "mock reader",
+			reader: mockReader,
+		},
+	} {
+		tc := tc // capture loop var
+		t.Run(tc.name, func(t *testing.T) {
 			withTestServer(func(ts *testServer) {
 				ts.spanReader.On("GetTrace", mock.AnythingOfType("*context.valueCtx"), mock.AnythingOfType("model.TraceID")).
 					Return(nil, spanstore.ErrTraceNotFound).Once()
 				var response structuredResponse
 				err := getJSON(ts.server.URL+"/api/traces/"+mockTraceID.String(), &response)
-				assert.EqualError(t, err,
+				require.EqualError(t, err,
 					`404 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":404,"msg":"trace not found"}]}`+"\n",
 				)
-			}, querysvc.QueryServiceOptions{ArchiveSpanReader: archiveReader}) // nil is ok
+			}, querysvc.QueryServiceOptions{ArchiveSpanReader: tc.reader}) // nil is ok
 		})
 	}
 }
@@ -60,8 +72,8 @@ func TestGetArchivedTraceSuccess(t *testing.T) {
 			Return(nil, spanstore.ErrTraceNotFound).Once()
 		var response structuredTraceResponse
 		err := getJSON(ts.server.URL+"/api/traces/"+mockTraceID.String(), &response)
-		assert.NoError(t, err)
-		assert.Len(t, response.Errors, 0)
+		require.NoError(t, err)
+		assert.Empty(t, response.Errors)
 		assert.Len(t, response.Traces, 1)
 		assert.Equal(t, traceID.String(), string(response.Traces[0].TraceID))
 	}, querysvc.QueryServiceOptions{ArchiveSpanReader: mockReader})
@@ -72,7 +84,7 @@ func TestArchiveTrace_BadTraceID(t *testing.T) {
 	withTestServer(func(ts *testServer) {
 		var response structuredResponse
 		err := postJSON(ts.server.URL+"/api/archive/badtraceid", []string{}, &response)
-		assert.Error(t, err)
+		require.Error(t, err)
 	}, querysvc.QueryServiceOptions{})
 }
 
@@ -89,7 +101,7 @@ func TestArchiveTrace_TraceNotFound(t *testing.T) {
 			Return(nil, spanstore.ErrTraceNotFound).Once()
 		var response structuredResponse
 		err := postJSON(ts.server.URL+"/api/archive/"+mockTraceID.String(), []string{}, &response)
-		assert.EqualError(t, err, `404 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":404,"msg":"trace not found"}]}`+"\n")
+		require.EqualError(t, err, `404 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":404,"msg":"trace not found"}]}`+"\n")
 	}, querysvc.QueryServiceOptions{ArchiveSpanReader: mockReader, ArchiveSpanWriter: mockWriter})
 }
 
@@ -97,7 +109,7 @@ func TestArchiveTrace_NoStorage(t *testing.T) {
 	withTestServer(func(ts *testServer) {
 		var response structuredResponse
 		err := postJSON(ts.server.URL+"/api/archive/"+mockTraceID.String(), []string{}, &response)
-		assert.EqualError(t, err, `500 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":500,"msg":"archive span storage was not configured"}]}`+"\n")
+		require.EqualError(t, err, `500 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":500,"msg":"archive span storage was not configured"}]}`+"\n")
 	}, querysvc.QueryServiceOptions{})
 }
 
@@ -110,7 +122,7 @@ func TestArchiveTrace_Success(t *testing.T) {
 			Return(mockTrace, nil).Once()
 		var response structuredResponse
 		err := postJSON(ts.server.URL+"/api/archive/"+mockTraceID.String(), []string{}, &response)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}, querysvc.QueryServiceOptions{ArchiveSpanWriter: mockWriter})
 }
 
@@ -123,6 +135,6 @@ func TestArchiveTrace_WriteErrors(t *testing.T) {
 			Return(mockTrace, nil).Once()
 		var response structuredResponse
 		err := postJSON(ts.server.URL+"/api/archive/"+mockTraceID.String(), []string{}, &response)
-		assert.EqualError(t, err, `500 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":500,"msg":"[cannot save, cannot save]"}]}`+"\n")
+		require.EqualError(t, err, `500 error from server: {"data":null,"total":0,"limit":0,"offset":0,"errors":[{"code":500,"msg":"cannot save\ncannot save"}]}`+"\n")
 	}, querysvc.QueryServiceOptions{ArchiveSpanWriter: mockWriter})
 }

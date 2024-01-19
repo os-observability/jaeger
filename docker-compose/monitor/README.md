@@ -1,29 +1,161 @@
-# Aggregated Trace Metrics Development/Demo Environment
+# Service Performance Monitoring (SPM) Development/Demo Environment
 
-Aggregated Trace Metrics (ATM) is an opt-in feature introduced to Jaeger that provides Request, Error and Duration (RED) metrics grouped by service name and operation that are derived from span data. These metrics are programmatically available through an API exposed by jaeger-query along with a "Monitor" UI tab that visualizes these metrics as graphs. For more details on this feature, please refer to the [tracking Issue](https://github.com/jaegertracing/jaeger/issues/2954) documenting the proposal and status.
+Service Performance Monitoring (SPM) is an opt-in feature introduced to Jaeger that provides Request, Error and Duration
+(RED) metrics grouped by service name and operation that are derived from span data. These metrics are programmatically
+available through an API exposed by jaeger-query along with a "Monitor" UI tab that visualizes these metrics as graphs.
 
-The motivation for providing this environment is to allow developers to either test Jaeger UI or their own applications against jaeger-query's metrics query API, as well as a quick and simple way for users to bring up the entire stack required to visualize RED metrics from simulated traces (or their own), much like Jaeger All-in-one.
+For more details on this feature, please refer to the [tracking Issue](https://github.com/jaegertracing/jaeger/issues/2954)
+documenting the proposal and status.
 
-This environment consists four backend components:
+The motivation for providing this environment is to allow developers to either test Jaeger UI or their own applications
+against jaeger-query's metrics query API, as well as a quick and simple way for users to bring up the entire stack
+required to visualize RED metrics from simulated traces or from their own application.
+
+This environment consists the following backend components:
 
 - [MicroSim](https://github.com/yurishkuro/microsim): a program to simulate traces.
 - [Jaeger All-in-one](https://www.jaegertracing.io/docs/1.24/getting-started/#all-in-one): the full Jaeger stack in a single container image.
-- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/): vendor agnostic integration layer for traces and metrics. Its main role in this particular development environment is to receive Jaeger spans, forward these spans untouched to Jaeger All-in-one while simultaneously aggregating metrics out of this span data. To learn more about span metrics aggregation, please refer to the [spanmetrics processor documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/spanmetricsprocessor).
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/): vendor agnostic integration layer for traces and metrics. Its main role in this particular development environment is to receive Jaeger spans, forward these spans untouched to Jaeger All-in-one while simultaneously aggregating metrics out of this span data. To learn more about span metrics aggregation, please refer to the [spanmetrics processor documentation][spanmetricsprocessor].
 - [Prometheus](https://prometheus.io/): a metrics collection and query engine, used to scrape metrics computed by OpenTelemetry Collector, and presents an API for Jaeger All-in-one to query these metrics.
+- [Grafana](https://grafana.com/): a metrics visualization, analytics & monitoring solution supporting multiple metrics databases.
+
 
 The following diagram illustrates the relationship between these components:
 
-![ATMDev (1)](https://user-images.githubusercontent.com/26584478/127763924-4ae2ce88-8fc2-4def-90c2-55358a433905.png)
+![SPM diagram](./diagram.png)
 
 # Getting Started
 
-## Bring up/down the dev environment
-```
+## Quickstart
+
+This brings up the system necessary to use the SPM feature locally.
+It uses the latest image tags from both Jaeger and OpenTelemetry.
+
+```shell
 docker compose up
-docker compose down
 ```
 
-## Example 1
+**Tips:**
+- Let the application run for a couple of minutes to ensure there is enough time series data to plot in the dashboard.
+- Navigate to Jaeger UI at http://localhost:16686/ and inspect the Monitor tab. Select `redis` service from the dropdown to see more than one endpoint.
+- To visualize the raw metrics stored on the Prometheus server (for debugging and local development use cases), a Grafana server is included in the docker-compose config, which is preconfigured to read metrics from the Prometheus server.
+  To access Grafana, navigate to http://localhost:3000/, click on the "Explore" and click the "Select metric" dropdown then select `calls_total`, for example.
+
+**Warning:** The included [docker-compose.yml](./docker-compose.yml) file uses the `latest` version of Jaeger and other components. If your local Docker registry already contains older versions, which may still be tagged as `latest`, you may want to delete those images before running the full set, to ensure consistent behavior:
+
+```bash
+make clean-all
+```
+
+## Development
+
+These steps allow for running the system necessary for SPM, built from Jaeger's source.
+
+The primary use case is for testing source code changes to the SPM feature locally.
+
+### Build jaeger-all-in-one docker image
+
+```shell
+make build
+```
+
+## Bring up the dev environment
+
+```bash
+make dev
+```
+
+## Backwards compatibility testing with spanmetrics processor
+
+```bash
+make dev-processor
+```
+
+For each "run" make target, you should expect to see the following in the Monitor tab after a few minutes:
+
+![Monitor Screenshot](images/startup-monitor-tab.png)
+
+## Sending traces
+
+We will use [tracegen](https://github.com/jaegertracing/jaeger/tree/main/cmd/tracegen)
+to emit traces to the OpenTelemetry Collector which, in turn, will aggregate the trace data into metrics.
+
+Start the local stack needed for SPM, if not already done:
+```shell
+docker compose up
+```
+
+Generate a specific number of traces with:
+```shell
+docker run --env OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://otel_collector:4317" \
+  --network monitor_backend \
+  --rm \
+  jaegertracing/jaeger-tracegen:1.49 \
+    -trace-exporter otlp-grpc \
+    -traces 1
+```
+
+Or, emit traces over a period of time with:
+```shell
+docker run --env OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://otel_collector:4317" \
+  --network monitor_backend \
+  --rm \
+  jaegertracing/jaeger-tracegen:1.49 \
+    -trace-exporter otlp-grpc \
+    -duration 5s
+```
+
+Navigate to Jaeger UI at http://localhost:16686/ and you should be able to see traces from this demo application
+under the `tracegen` service:
+
+![TraceGen Traces](images/tracegen_traces.png)
+
+Then navigate to the Monitor tab at http://localhost:16686/monitor to view the RED metrics:
+
+![TraceGen RED Metrics](images/tracegen_metrics.png)
+
+## Migrating to Span Metrics Connector 
+
+### Background
+
+A new [Connector](https://pkg.go.dev/go.opentelemetry.io/collector/connector#section-readme) API was introduced
+to the OpenTelemetry Collector to provide a means of receiving and exporting between any type of telemetry.
+
+The existing [Span Metrics Processor][spanmetricsprocessor] was a good candidate to migrate over to the connector type,
+resulting in the new [Span Metrics Connector][spanmetricsconnector] component.
+
+The Span Metrics Connector variant introduces some [breaking changes][processor-to-connector], and the following
+section aims to provide the instructions necessary to use the metrics produced by this component.
+
+### Migrating
+
+Assuming the OpenTelemetry Collector is running with the [Span Metrics Connector][spanmetricsconnector] correctly
+configured, the minimum configuration required for jaeger-query or jaeger-all-in-one are as follows:
+
+as command line parameters:
+```shell
+--prometheus.query.support-spanmetrics-connector=true
+```
+
+as environment variables:
+```shell
+PROMETHEUS_QUERY_SUPPORT_SPANMETRICS_CONNECTOR=true
+```
+
+If the Span Metrics Connector is configured with a namespace and/or an alternative duration unit,
+the following configuration options are available, as both command line and environment variables:
+
+```shell
+--prometheus.query.namespace=span_metrics
+--prometheus.query.duration-unit=s
+
+PROMETHEUS_QUERY_NAMESPACE=span_metrics
+PROMETHEUS_QUERY_DURATION_UNIT=s
+```
+
+## Querying the HTTP API
+
+### Example 1
 Fetch call rates for both the driver and frontend services, grouped by operation, from now,
 looking back 1 second with a sliding rate-calculation window of 1m and step size of 1 millisecond
 
@@ -32,7 +164,7 @@ curl "http://localhost:16686/api/metrics/calls?service=driver&service=frontend&g
 ```
 
 
-## Example 2
+### Example 2
 Fetch P95 latencies for both the driver and frontend services from now,
 looking back 1 second with a sliding rate-calculation window of 1m and step size of 1 millisecond, where the span kind is either "server" or "client".
 
@@ -40,19 +172,19 @@ looking back 1 second with a sliding rate-calculation window of 1m and step size
 curl "http://localhost:16686/api/metrics/latencies?service=driver&service=frontend&quantile=0.95&endTs=$(date +%s)000&lookback=1000&step=100&ratePer=60000&spanKind=server&spanKind=client" | jq .
 ```
 
-## Example 3
+### Example 3
 Fetch error rates for both driver and frontend services using default parameters.
 ```bash
 curl "http://localhost:16686/api/metrics/errors?service=driver&service=frontend" | jq .
 ```
 
-## Example 4
+### Example 4
 Fetch the minimum step size supported by the underlying metrics store.
 ```bash
 curl "http://localhost:16686/api/metrics/minstep" | jq .
 ```
 
-# HTTP API
+# HTTP API Specification
 
 ## Query Metrics
 
@@ -185,3 +317,7 @@ $ curl http://localhost:16686/api/metrics/minstep | jq .
   ]
 }
 ```
+
+[spanmetricsprocessor]: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/spanmetricsprocessor
+[spanmetricsconnector]: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/connector/spanmetricsconnector
+[processor-to-connector]: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/connector/spanmetricsconnector#span-to-metrics-processor-to-span-to-metrics-connector

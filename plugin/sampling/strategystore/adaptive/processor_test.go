@@ -23,16 +23,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sampling/model"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/sampling/calculationstrategy"
 	epmocks "github.com/jaegertracing/jaeger/plugin/sampling/leaderelection/mocks"
+	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	smocks "github.com/jaegertracing/jaeger/storage/samplingstore/mocks"
-	"github.com/jaegertracing/jaeger/thrift-gen/sampling"
 )
 
 func testThroughputs() []*model.Throughput {
@@ -102,13 +102,13 @@ func TestAggregateThroughput(t *testing.T) {
 
 	opThroughput, ok := throughput["GET"]
 	require.True(t, ok)
-	assert.Equal(t, opThroughput.Count, int64(8))
-	assert.Equal(t, opThroughput.Probabilities, map[string]struct{}{"0.1": {}, "0.2": {}})
+	assert.Equal(t, int64(8), opThroughput.Count)
+	assert.Equal(t, map[string]struct{}{"0.1": {}, "0.2": {}}, opThroughput.Probabilities)
 
 	opThroughput, ok = throughput["PUT"]
 	require.True(t, ok)
-	assert.Equal(t, opThroughput.Count, int64(5))
-	assert.Equal(t, opThroughput.Probabilities, map[string]struct{}{"0.1": {}})
+	assert.Equal(t, int64(5), opThroughput.Count)
+	assert.Equal(t, map[string]struct{}{"0.1": {}}, opThroughput.Probabilities)
 
 	throughput, ok = aggregatedThroughput["svcB"]
 	require.True(t, ok)
@@ -116,8 +116,8 @@ func TestAggregateThroughput(t *testing.T) {
 
 	opThroughput, ok = throughput["GET"]
 	require.True(t, ok)
-	assert.Equal(t, opThroughput.Count, int64(3))
-	assert.Equal(t, opThroughput.Probabilities, map[string]struct{}{"0.1": {}})
+	assert.Equal(t, int64(3), opThroughput.Count)
+	assert.Equal(t, map[string]struct{}{"0.1": {}}, opThroughput.Probabilities)
 }
 
 func TestInitializeThroughput(t *testing.T) {
@@ -133,10 +133,10 @@ func TestInitializeThroughput(t *testing.T) {
 
 	require.Len(t, p.throughputs, 2)
 	require.Len(t, p.throughputs[0].throughput, 2)
-	assert.Equal(t, p.throughputs[0].interval, time.Minute)
+	assert.Equal(t, time.Minute, p.throughputs[0].interval)
 	assert.Equal(t, p.throughputs[0].endTime, time.Time{}.Add(time.Minute*20))
 	require.Len(t, p.throughputs[1].throughput, 1)
-	assert.Equal(t, p.throughputs[1].interval, time.Minute)
+	assert.Equal(t, time.Minute, p.throughputs[1].interval)
 	assert.Equal(t, p.throughputs[1].endTime, time.Time{}.Add(time.Minute*19))
 }
 
@@ -147,7 +147,7 @@ func TestInitializeThroughputFailure(t *testing.T) {
 	p := &Processor{storage: mockStorage, Options: Options{CalculationInterval: time.Minute, AggregationBuckets: 1}}
 	p.initializeThroughput(time.Time{}.Add(time.Minute * 20))
 
-	assert.Len(t, p.throughputs, 0)
+	assert.Empty(t, p.throughputs)
 }
 
 func TestCalculateQPS(t *testing.T) {
@@ -371,7 +371,7 @@ func TestRunCalculationLoop(t *testing.T) {
 	p.Close()
 
 	strategy, err := p.GetSamplingStrategy(context.Background(), "svcA")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, strategy.OperationSampling.PerOperationStrategies, 2)
 }
 
@@ -493,7 +493,7 @@ func TestRealisticRunCalculationLoop(t *testing.T) {
 	p.Close()
 
 	strategy, err := p.GetSamplingStrategy(context.Background(), "svcA")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	require.Len(t, strategy.OperationSampling.PerOperationStrategies, 4)
 	strategies := strategy.OperationSampling.PerOperationStrategies
 
@@ -537,17 +537,17 @@ func TestConstructorFailure(t *testing.T) {
 		AggregationBuckets:         0,
 	}
 	_, err := newProcessor(cfg, "host", nil, nil, metrics.NullFactory, logger)
-	assert.EqualError(t, err, "CalculationInterval and AggregationBuckets must be greater than 0")
+	require.EqualError(t, err, "CalculationInterval and AggregationBuckets must be greater than 0")
 
 	cfg.CalculationInterval = 0
 	_, err = newProcessor(cfg, "host", nil, nil, metrics.NullFactory, logger)
-	assert.EqualError(t, err, "CalculationInterval and AggregationBuckets must be greater than 0")
+	require.EqualError(t, err, "CalculationInterval and AggregationBuckets must be greater than 0")
 
 	cfg.CalculationInterval = time.Millisecond
 	cfg.AggregationBuckets = 1
 	cfg.BucketsForCalculation = -1
 	_, err = newProcessor(cfg, "host", nil, nil, metrics.NullFactory, logger)
-	assert.EqualError(t, err, "BucketsForCalculation cannot be less than 1")
+	require.EqualError(t, err, "BucketsForCalculation cannot be less than 1")
 }
 
 func TestGenerateStrategyResponses(t *testing.T) {
@@ -561,19 +561,20 @@ func TestGenerateStrategyResponses(t *testing.T) {
 		Options: Options{
 			InitialSamplingProbability: 0.001,
 			MinSamplesPerSecond:        0.0001,
-		}}
+		},
+	}
 	p.generateStrategyResponses()
 
-	expectedResponse := map[string]*sampling.SamplingStrategyResponse{
+	expectedResponse := map[string]*api_v2.SamplingStrategyResponse{
 		"svcA": {
-			StrategyType: sampling.SamplingStrategyType_PROBABILISTIC,
-			OperationSampling: &sampling.PerOperationSamplingStrategies{
+			StrategyType: api_v2.SamplingStrategyType_PROBABILISTIC,
+			OperationSampling: &api_v2.PerOperationSamplingStrategies{
 				DefaultSamplingProbability:       0.001,
 				DefaultLowerBoundTracesPerSecond: 0.0001,
-				PerOperationStrategies: []*sampling.OperationSamplingStrategy{
+				PerOperationStrategies: []*api_v2.OperationSamplingStrategy{
 					{
 						Operation: "GET",
-						ProbabilisticSampling: &sampling.ProbabilisticSamplingStrategy{
+						ProbabilisticSampling: &api_v2.ProbabilisticSamplingStrategy{
 							SamplingRate: 0.5,
 						},
 					},
@@ -609,6 +610,7 @@ func TestUsingAdaptiveSampling(t *testing.T) {
 		assert.Equal(t, test.expected, p.isUsingAdaptiveSampling(test.probability, test.service, test.operation, throughput))
 	}
 }
+
 func TestPrependServiceCache(t *testing.T) {
 	p := &Processor{}
 	for i := 0; i < serviceCacheSize*2; i++ {
@@ -877,7 +879,7 @@ func TestErrors(t *testing.T) {
 
 	p, err := newProcessor(cfg, "host", mockStorage, mockEP, metrics.NullFactory, zap.NewNop())
 	require.NoError(t, err)
-	assert.Error(t, p.Start())
+	require.Error(t, p.Start())
 
 	// close errors
 	mockEP = &epmocks.ElectionParticipant{}
@@ -887,6 +889,6 @@ func TestErrors(t *testing.T) {
 
 	p, err = newProcessor(cfg, "host", mockStorage, mockEP, metrics.NullFactory, zap.NewNop())
 	require.NoError(t, err)
-	assert.NoError(t, p.Start())
-	assert.Error(t, p.Close())
+	require.NoError(t, p.Start())
+	require.Error(t, p.Close())
 }

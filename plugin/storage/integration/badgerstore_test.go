@@ -19,10 +19,10 @@ package integration
 import (
 	"testing"
 
-	assert "github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/badger"
 )
@@ -49,6 +49,9 @@ func (s *BadgerIntegrationStorage) initialize() error {
 	if err != nil {
 		return err
 	}
+	if s.SamplingStore, err = s.factory.CreateSamplingStore(0); err != nil {
+		return err
+	}
 
 	s.SpanReader = sr
 	s.SpanWriter = sw
@@ -59,8 +62,8 @@ func (s *BadgerIntegrationStorage) initialize() error {
 	logger, _ := testutils.NewLogger()
 	s.logger = logger
 
-	// TODO: remove this flag after badger support returning spanKind when get operations
-	s.NotSupportSpanKindWithOperation = true
+	// TODO: remove this badger supports returning spanKind from GetOperations
+	s.GetOperationsMissingSpanKind = true
 	return nil
 }
 
@@ -82,7 +85,7 @@ func (s *BadgerIntegrationStorage) refresh() error {
 
 func TestBadgerStorage(t *testing.T) {
 	s := &BadgerIntegrationStorage{}
-	assert.NoError(t, s.initialize())
+	require.NoError(t, s.initialize())
 	s.IntegrationTestAll(t)
 	defer s.clear()
 }

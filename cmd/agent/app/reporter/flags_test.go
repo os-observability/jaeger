@@ -17,7 +17,6 @@ package reporter
 import (
 	"flag"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -45,7 +44,7 @@ func TestBindFlags_NoJaegerTags(t *testing.T) {
 	b := &Options{}
 	b.InitFromViper(v, zap.NewNop())
 	assert.Equal(t, Type("grpc"), b.ReporterType)
-	assert.Len(t, b.AgentTags, 0)
+	assert.Empty(t, b.AgentTags)
 }
 
 func TestBindFlags(t *testing.T) {
@@ -72,11 +71,8 @@ func TestBindFlags(t *testing.T) {
 	require.NoError(t, err)
 
 	b := &Options{}
-	os.Setenv("envKey1", "envVal1")
-	defer os.Unsetenv("envKey1")
-
-	os.Setenv("envKey4", "envVal4")
-	defer os.Unsetenv("envKey4")
+	t.Setenv("envKey1", "envVal1")
+	t.Setenv("envKey4", "envVal4")
 
 	b.InitFromViper(v, zap.NewNop())
 
@@ -93,7 +89,6 @@ func TestBindFlags(t *testing.T) {
 }
 
 func TestBindFlagsAllInOne(t *testing.T) {
-
 	setupcontext.SetAllInOne()
 	defer setupcontext.UnsetAllInOne()
 

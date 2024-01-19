@@ -16,39 +16,33 @@
 package app
 
 import (
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sanitizer"
 	"github.com/jaegertracing/jaeger/model"
-)
-
-const (
-	// DefaultNumWorkers is the default number of workers consuming from the processor queue
-	DefaultNumWorkers = 50
-	// DefaultQueueSize is the size of the processor's queue
-	DefaultQueueSize = 2000
-	// DefaultGRPCMaxReceiveMessageLength is the default max receivable message size for the gRPC Collector
-	DefaultGRPCMaxReceiveMessageLength = 4 * 1024 * 1024
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
 type options struct {
-	logger             *zap.Logger
-	serviceMetrics     metrics.Factory
-	hostMetrics        metrics.Factory
-	preProcessSpans    ProcessSpans
-	sanitizer          sanitizer.SanitizeSpan
-	preSave            ProcessSpan
-	spanFilter         FilterSpan
-	numWorkers         int
-	blockingSubmit     bool
-	queueSize          int
-	dynQueueSizeWarmup uint
-	dynQueueSizeMemory uint
-	reportBusy         bool
-	extraFormatTypes   []processor.SpanFormat
-	collectorTags      map[string]string
+	logger                 *zap.Logger
+	serviceMetrics         metrics.Factory
+	hostMetrics            metrics.Factory
+	preProcessSpans        ProcessSpans // see docs in PreProcessSpans option.
+	sanitizer              sanitizer.SanitizeSpan
+	preSave                ProcessSpan
+	spanFilter             FilterSpan
+	numWorkers             int
+	blockingSubmit         bool
+	queueSize              int
+	dynQueueSizeWarmup     uint
+	dynQueueSizeMemory     uint
+	reportBusy             bool
+	extraFormatTypes       []processor.SpanFormat
+	collectorTags          map[string]string
+	spanSizeMetricsEnabled bool
+	onDroppedSpan          func(span *model.Span)
 }
 
 // Option is a function that sets some option on StorageBuilder.
@@ -78,7 +72,9 @@ func (options) HostMetrics(hostMetrics metrics.Factory) Option {
 	}
 }
 
-// PreProcessSpans creates an Option that initializes the preProcessSpans function
+// PreProcessSpans creates an Option that initializes the preProcessSpans function.
+// This function can implement non-standard pre-processing of the spans when extending
+// the collector from source. Jaeger itself does not define any pre-processing.
 func (options) PreProcessSpans(preProcessSpans ProcessSpans) Option {
 	return func(b *options) {
 		b.preProcessSpans = preProcessSpans
@@ -162,6 +158,20 @@ func (options) CollectorTags(extraTags map[string]string) Option {
 	}
 }
 
+// SpanSizeMetricsEnabled creates an Option that initializes the spanSizeMetrics boolean
+func (options) SpanSizeMetricsEnabled(spanSizeMetrics bool) Option {
+	return func(b *options) {
+		b.spanSizeMetricsEnabled = spanSizeMetrics
+	}
+}
+
+// OnDroppedSpan creates an Option that initializes the onDroppedSpan function
+func (options) OnDroppedSpan(onDroppedSpan func(span *model.Span)) Option {
+	return func(b *options) {
+		b.onDroppedSpan = onDroppedSpan
+	}
+}
+
 func (o options) apply(opts ...Option) options {
 	ret := options{}
 	for _, opt := range opts {
@@ -177,19 +187,19 @@ func (o options) apply(opts ...Option) options {
 		ret.hostMetrics = metrics.NullFactory
 	}
 	if ret.preProcessSpans == nil {
-		ret.preProcessSpans = func(spans []*model.Span) {}
+		ret.preProcessSpans = func(spans []*model.Span, tenant string) {}
 	}
 	if ret.sanitizer == nil {
 		ret.sanitizer = func(span *model.Span) *model.Span { return span }
 	}
 	if ret.preSave == nil {
-		ret.preSave = func(span *model.Span) {}
+		ret.preSave = func(span *model.Span, tenant string) {}
 	}
 	if ret.spanFilter == nil {
 		ret.spanFilter = func(span *model.Span) bool { return true }
 	}
 	if ret.numWorkers == 0 {
-		ret.numWorkers = DefaultNumWorkers
+		ret.numWorkers = flags.DefaultNumWorkers
 	}
 	return ret
 }

@@ -23,10 +23,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
 )
@@ -46,14 +46,17 @@ func TestMultipleCollectors(t *testing.T) {
 	defer s2.Stop()
 
 	mFactory := metricstest.NewFactory(time.Microsecond)
-	proxy, err := NewCollectorProxy(&ConnBuilder{CollectorHostPorts: []string{addr1.String(), addr2.String()}}, nil, mFactory, zap.NewNop())
+	defer mFactory.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	proxy, err := NewCollectorProxy(ctx, &ConnBuilder{CollectorHostPorts: []string{addr1.String(), addr2.String()}}, nil, mFactory, zap.NewNop())
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
 	assert.NotNil(t, proxy.GetReporter())
 	assert.NotNil(t, proxy.GetManager())
 	assert.NotNil(t, proxy.GetConn())
 
-	var bothServers = false
+	bothServers := false
 	r := proxy.GetReporter()
 	// TODO do not iterate, just create two batches
 	for i := 0; i < 100; i++ {
@@ -67,8 +70,8 @@ func TestMultipleCollectors(t *testing.T) {
 	c, g := mFactory.Snapshot()
 	assert.True(t, len(g) > 0)
 	assert.True(t, len(c) > 0)
-	assert.Equal(t, true, bothServers)
-	require.Nil(t, proxy.Close())
+	assert.True(t, bothServers)
+	require.NoError(t, proxy.Close())
 }
 
 func initializeGRPCTestServer(t *testing.T, beforeServe func(server *grpc.Server), opts ...grpc.ServerOption) (*grpc.Server, net.Addr) {

@@ -19,17 +19,16 @@ import (
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	"github.com/jaegertracing/jaeger/model"
-	"github.com/jaegertracing/jaeger/thrift-gen/sampling"
+	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 )
 
 type mockSamplingStore struct{}
 
-func (s mockSamplingStore) GetSamplingStrategy(_ context.Context, serviceName string) (*sampling.SamplingStrategyResponse, error) {
+func (s mockSamplingStore) GetSamplingStrategy(_ context.Context, serviceName string) (*api_v2.SamplingStrategyResponse, error) {
 	return nil, nil
 }
 
-type mockSpanProcessor struct {
-}
+type mockSpanProcessor struct{}
 
 func (p *mockSpanProcessor) Close() error {
 	return nil

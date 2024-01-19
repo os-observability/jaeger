@@ -26,17 +26,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/jaegertracing/jaeger/cmd/query/app/mocks"
-	"github.com/jaegertracing/jaeger/pkg/fswatcher"
+	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
@@ -52,7 +49,18 @@ func TestNotExistingUiConfig(t *testing.T) {
 func TestRegisterStaticHandlerPanic(t *testing.T) {
 	logger, buf := testutils.NewLogger()
 	assert.Panics(t, func() {
-		RegisterStaticHandler(mux.NewRouter(), logger, &QueryOptions{StaticAssets: "/foo/bar"})
+		RegisterStaticHandler(
+			mux.NewRouter(),
+			logger,
+			&QueryOptions{
+				QueryOptionsBase: QueryOptionsBase{
+					StaticAssets: QueryOptionsStaticAssets{
+						Path: "/foo/bar",
+					},
+				},
+			},
+			querysvc.StorageCapabilities{ArchiveStorage: false},
+		)
 	})
 	assert.Contains(t, buf.String(), "Could not create static assets handler")
 	assert.Contains(t, buf.String(), "no such file or directory")
@@ -60,34 +68,44 @@ func TestRegisterStaticHandlerPanic(t *testing.T) {
 
 func TestRegisterStaticHandler(t *testing.T) {
 	testCases := []struct {
-		basePath         string // input to the test
-		subroute         bool   // should we create a subroute?
-		baseURL          string // expected URL prefix
-		expectedBaseHTML string // substring to match in the home page
-		UIConfigPath     string // path to UI config
-		expectedUIConfig string // expected UI config
+		basePath                    string // input to the test
+		subroute                    bool   // should we create a subroute?
+		baseURL                     string // expected URL prefix
+		archiveStorage              bool   // archive storage enabled?
+		logAccess                   bool
+		expectedBaseHTML            string // substring to match in the home page
+		UIConfigPath                string // path to UI config
+		expectedUIConfig            string // expected UI config
+		expectedStorageCapabilities string // expected storage capabilities
 	}{
 		{
-			basePath:         "",
-			baseURL:          "/",
-			expectedBaseHTML: `<base href="/"`,
-			UIConfigPath:     "",
-			expectedUIConfig: "JAEGER_CONFIG=DEFAULT_CONFIG;",
+			basePath:                    "",
+			baseURL:                     "/",
+			expectedBaseHTML:            `<base href="/"`,
+			archiveStorage:              false,
+			logAccess:                   true,
+			UIConfigPath:                "",
+			expectedUIConfig:            "JAEGER_CONFIG=DEFAULT_CONFIG;",
+			expectedStorageCapabilities: `JAEGER_STORAGE_CAPABILITIES = {"archiveStorage":false};`,
 		},
 		{
-			basePath:         "/",
-			baseURL:          "/",
-			expectedBaseHTML: `<base href="/"`,
-			UIConfigPath:     "fixture/ui-config.json",
-			expectedUIConfig: `JAEGER_CONFIG = {"x":"y"};`,
+			basePath:                    "/",
+			baseURL:                     "/",
+			archiveStorage:              false,
+			expectedBaseHTML:            `<base href="/"`,
+			UIConfigPath:                "fixture/ui-config.json",
+			expectedUIConfig:            `JAEGER_CONFIG = {"x":"y"};`,
+			expectedStorageCapabilities: `JAEGER_STORAGE_CAPABILITIES = {"archiveStorage":false};`,
 		},
 		{
-			basePath:         "/jaeger",
-			baseURL:          "/jaeger/",
-			expectedBaseHTML: `<base href="/jaeger/"`,
-			subroute:         true,
-			UIConfigPath:     "fixture/ui-config.js",
-			expectedUIConfig: "function UIConfig(){",
+			basePath:                    "/jaeger",
+			baseURL:                     "/jaeger/",
+			expectedBaseHTML:            `<base href="/jaeger/"`,
+			subroute:                    true,
+			archiveStorage:              true,
+			UIConfigPath:                "fixture/ui-config.js",
+			expectedUIConfig:            "function UIConfig(){",
+			expectedStorageCapabilities: `JAEGER_STORAGE_CAPABILITIES = {"archiveStorage":true};`,
 		},
 	}
 	httpClient = &http.Client{
@@ -95,16 +113,23 @@ func TestRegisterStaticHandler(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run("basePath="+testCase.basePath, func(t *testing.T) {
-			logger, _ := testutils.NewLogger()
+			logger, logBuf := testutils.NewLogger()
 			r := mux.NewRouter()
 			if testCase.subroute {
 				r = r.PathPrefix(testCase.basePath).Subrouter()
 			}
 			RegisterStaticHandler(r, logger, &QueryOptions{
-				StaticAssets: "fixture",
-				BasePath:     testCase.basePath,
-				UIConfig:     testCase.UIConfigPath,
-			})
+				QueryOptionsBase: QueryOptionsBase{
+					StaticAssets: QueryOptionsStaticAssets{
+						Path:      "fixture",
+						LogAccess: testCase.logAccess,
+					},
+					BasePath: testCase.basePath,
+					UIConfig: testCase.UIConfigPath,
+				},
+			},
+				querysvc.StorageCapabilities{ArchiveStorage: testCase.archiveStorage},
+			)
 
 			server := httptest.NewServer(r)
 			defer server.Close()
@@ -121,23 +146,26 @@ func TestRegisterStaticHandler(t *testing.T) {
 				return string(respByteArray)
 			}
 
-			respString := httpGet(favoriteIcon)
-			assert.Contains(t, respString, "Test Favicon") // this text is present in fixtures/favicon.ico
-
 			html := httpGet("") // get home page
 			assert.Contains(t, html, testCase.expectedUIConfig, "actual: %v", html)
+			assert.Contains(t, html, testCase.expectedStorageCapabilities, "actual: %v", html)
 			assert.Contains(t, html, `JAEGER_VERSION = {"gitCommit":"","gitVersion":"","buildDate":""};`, "actual: %v", html)
 			assert.Contains(t, html, testCase.expectedBaseHTML, "actual: %v", html)
 
 			asset := httpGet("static/asset.txt")
 			assert.Contains(t, asset, "some asset", "actual: %v", asset)
+			if testCase.logAccess {
+				assert.Contains(t, logBuf.String(), "static/asset.txt")
+			} else {
+				assert.NotContains(t, logBuf.String(), "static/asset.txt")
+			}
 		})
 	}
 }
 
 func TestNewStaticAssetsHandlerErrors(t *testing.T) {
 	_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{UIConfigPath: "fixture/invalid-config"})
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	for _, base := range []string{"x", "x/", "/x/"} {
 		_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{UIConfigPath: "fixture/ui-config.json", BasePath: base})
@@ -146,119 +174,28 @@ func TestNewStaticAssetsHandlerErrors(t *testing.T) {
 	}
 }
 
-func TestWatcherError(t *testing.T) {
-	const totalWatcherAddCalls = 2
+func TestHotReloadUIConfig(t *testing.T) {
+	dir := t.TempDir()
 
-	for _, tc := range []struct {
-		name                string
-		errorOnNthAdd       int
-		newWatcherErr       error
-		watcherAddErr       error
-		wantWatcherAddCalls int
-	}{
-		{
-			name:          "NewWatcher error",
-			newWatcherErr: fmt.Errorf("new watcher error"),
-		},
-		{
-			name:                "Watcher.Add first call error",
-			errorOnNthAdd:       0,
-			watcherAddErr:       fmt.Errorf("add first error"),
-			wantWatcherAddCalls: 2,
-		},
-		{
-			name:                "Watcher.Add second call error",
-			errorOnNthAdd:       1,
-			watcherAddErr:       fmt.Errorf("add second error"),
-			wantWatcherAddCalls: 2,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// Prepare
-			zcore, logObserver := observer.New(zapcore.InfoLevel)
-			logger := zap.New(zcore)
-			defer func() {
-				if r := recover(); r != nil {
-					// Select loop exits without logging error, only containing previous error log.
-					assert.Equal(t, logObserver.FilterMessage("event").Len(), 1)
-					assert.Equal(t, "send on closed channel", fmt.Sprint(r))
-				}
-			}()
-
-			watcher := &mocks.Watcher{}
-			for i := 0; i < totalWatcherAddCalls; i++ {
-				var err error
-				if i == tc.errorOnNthAdd {
-					err = tc.watcherAddErr
-				}
-				watcher.On("Add", mock.Anything).Return(err).Once()
-			}
-			watcher.On("Events").Return(make(chan fsnotify.Event))
-			errChan := make(chan error)
-			watcher.On("Errors").Return(errChan)
-
-			// Test
-			_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{
-				UIConfigPath: "fixture/ui-config-hotreload.json",
-				NewWatcher: func() (fswatcher.Watcher, error) {
-					return watcher, tc.newWatcherErr
-				},
-				Logger: logger,
-			})
-
-			// Validate
-
-			// Error logged but not returned
-			assert.NoError(t, err)
-			if tc.newWatcherErr != nil {
-				assert.Equal(t, logObserver.FilterField(zap.Error(tc.newWatcherErr)).Len(), 1)
-			} else {
-				assert.Zero(t, logObserver.FilterField(zap.Error(tc.newWatcherErr)).Len())
-			}
-
-			if tc.watcherAddErr != nil {
-				assert.Equal(t, logObserver.FilterField(zap.Error(tc.watcherAddErr)).Len(), 1)
-			} else {
-				assert.Zero(t, logObserver.FilterField(zap.Error(tc.watcherAddErr)).Len())
-			}
-
-			watcher.AssertNumberOfCalls(t, "Add", tc.wantWatcherAddCalls)
-
-			// Validate Events and Errors channels
-			if tc.newWatcherErr == nil {
-				errChan <- fmt.Errorf("first error")
-
-				waitUntil(t, func() bool {
-					return logObserver.FilterMessage("event").Len() > 0
-				}, 100, 10*time.Millisecond, "timed out waiting for error")
-				assert.Equal(t, logObserver.FilterMessage("event").Len(), 1)
-
-				close(errChan)
-				errChan <- fmt.Errorf("second error on closed chan")
-			}
-		})
-	}
-}
-
-func TestHotReloadUIConfigTempFile(t *testing.T) {
-	dir, err := os.MkdirTemp("", "ui-config-hotreload-*")
+	cfgFile, err := os.CreateTemp(dir, "*.json")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	defer cfgFile.Close()
+	cfgFileName := cfgFile.Name()
 
-	tmpfile, err := os.CreateTemp(dir, "*.json")
+	tmpFile, err := os.CreateTemp(dir, "*.json")
 	require.NoError(t, err)
-	tmpFileName := tmpfile.Name()
+	defer tmpFile.Close()
 
 	content, err := os.ReadFile("fixture/ui-config-hotreload.json")
 	require.NoError(t, err)
 
-	err = syncWrite(tmpFileName, content, 0644)
+	err = syncWrite(cfgFile, tmpFile, content)
 	require.NoError(t, err)
 
 	zcore, logObserver := observer.New(zapcore.InfoLevel)
 	logger := zap.New(zcore)
 	h, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{
-		UIConfigPath: tmpFileName,
+		UIConfigPath: cfgFileName,
 		Logger:       logger,
 	})
 	require.NoError(t, err)
@@ -267,12 +204,12 @@ func TestHotReloadUIConfigTempFile(t *testing.T) {
 	assert.Contains(t, c, "About Jaeger")
 
 	newContent := strings.Replace(string(content), "About Jaeger", "About a new Jaeger", 1)
-	err = syncWrite(tmpFileName, []byte(newContent), 0644)
+	err = syncWrite(cfgFile, tmpFile, []byte(newContent))
 	require.NoError(t, err)
 
 	waitUntil(t, func() bool {
 		return logObserver.FilterMessage("reloaded UI config").
-			FilterField(zap.String("filename", tmpFileName)).Len() > 0
+			FilterField(zap.String("filename", cfgFileName)).Len() > 0
 	}, 100, 10*time.Millisecond, "timed out waiting for the hot reload to kick in")
 
 	i := string(h.indexHTML.Load().([]byte))
@@ -290,9 +227,9 @@ func TestLoadUIConfig(t *testing.T) {
 		t.Run(description, func(t *testing.T) {
 			config, err := loadUIConfig(testCase.configFile)
 			if testCase.expectedError != "" {
-				assert.EqualError(t, err, testCase.expectedError)
+				require.EqualError(t, err, testCase.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 			assert.EqualValues(t, testCase.expected, config)
 		})
@@ -345,7 +282,8 @@ func TestLoadUIConfig(t *testing.T) {
   return {
     x: "y"
   }
-}`)},
+}`),
+		},
 	})
 	run("js-menu", testCase{
 		configFile: "fixture/ui-config-menu.js",
@@ -360,7 +298,8 @@ func TestLoadUIConfig(t *testing.T) {
       }
     ]
   }
-}`)},
+}`),
+		},
 	})
 }
 
@@ -392,8 +331,8 @@ func waitUntil(t *testing.T, f func() bool, iterations int, sleepInterval time.D
 
 // syncWrite ensures data is written to the given filename and flushed to disk.
 // This ensures that any watchers looking for file system changes can be reliably alerted.
-func syncWrite(filename string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_SYNC, perm)
+func syncWrite(target *os.File, temp *os.File, data []byte) error {
+	f, err := os.OpenFile(temp.Name(), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_SYNC, 0o644)
 	if err != nil {
 		return err
 	}
@@ -401,5 +340,8 @@ func syncWrite(filename string, data []byte, perm os.FileMode) error {
 	if _, err = f.Write(data); err != nil {
 		return err
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), target.Name())
 }

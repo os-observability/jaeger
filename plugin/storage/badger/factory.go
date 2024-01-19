@@ -15,20 +15,27 @@
 package badger
 
 import (
+	"errors"
 	"expvar"
 	"flag"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/pkg/distributedlock"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/plugin"
 	depStore "github.com/jaegertracing/jaeger/plugin/storage/badger/dependencystore"
+	badgerSampling "github.com/jaegertracing/jaeger/plugin/storage/badger/samplingstore"
 	badgerStore "github.com/jaegertracing/jaeger/plugin/storage/badger/spanstore"
+	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
+	"github.com/jaegertracing/jaeger/storage/samplingstore"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
 
@@ -37,6 +44,17 @@ const (
 	keyLogSpaceAvailableName   = "badger_key_log_bytes_available"
 	lastMaintenanceRunName     = "badger_storage_maintenance_last_run"
 	lastValueLogCleanedName    = "badger_storage_valueloggc_last_run"
+)
+
+var ( // interface comformance checks
+	_ storage.Factory     = (*Factory)(nil)
+	_ io.Closer           = (*Factory)(nil)
+	_ plugin.Configurable = (*Factory)(nil)
+
+	// TODO badger could implement archive storage
+	// _ storage.ArchiveFactory       = (*Factory)(nil)
+
+	_ storage.SamplingStoreFactory = (*Factory)(nil)
 )
 
 // Factory implements storage.Factory for Badger backend.
@@ -143,7 +161,7 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 // initializeDir makes the directory and parent directories if the path doesn't exists yet.
 func initializeDir(path string) {
 	if _, err := os.Stat(path); err != nil && os.IsNotExist(err) {
-		os.MkdirAll(path, 0700)
+		os.MkdirAll(path, 0o700)
 	}
 }
 
@@ -161,6 +179,16 @@ func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
 func (f *Factory) CreateDependencyReader() (dependencystore.Reader, error) {
 	sr, _ := f.CreateSpanReader() // err is always nil
 	return depStore.NewDependencyStore(sr), nil
+}
+
+// CreateSamplingStore implements storage.SamplingStoreFactory
+func (f *Factory) CreateSamplingStore(maxBuckets int) (samplingstore.Store, error) {
+	return badgerSampling.NewSamplingStore(f.store), nil
+}
+
+// CreateLock implements storage.SamplingStoreFactory
+func (f *Factory) CreateLock() (distributedlock.Lock, error) {
+	return &lock{}, nil
 }
 
 // Close Implements io.Closer and closes the underlying storage
@@ -197,7 +225,7 @@ func (f *Factory) maintenance() {
 			for err == nil {
 				err = f.store.RunValueLogGC(0.5) // 0.5 is selected to rewrite a file if half of it can be discarded
 			}
-			if err == badger.ErrNoRewrite {
+			if errors.Is(err, badger.ErrNoRewrite) {
 				f.metrics.LastValueLogCleaned.Update(t.UnixNano())
 			} else {
 				f.logger.Error("Failed to run ValueLogGC", zap.Error(err))

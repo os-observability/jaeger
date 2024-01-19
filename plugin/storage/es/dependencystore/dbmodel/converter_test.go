@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestConvertDependencies(t *testing.T) {
@@ -48,4 +49,8 @@ func TestConvertDependencies(t *testing.T) {
 			assert.Equal(t, test.dLinks, a)
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -17,6 +17,7 @@ package cassandra
 
 import (
 	"flag"
+	"log"
 	"strings"
 	"time"
 
@@ -143,7 +144,7 @@ func (opt *Options) AddFlags(flagSet *flag.FlagSet) {
 }
 
 func addFlags(flagSet *flag.FlagSet, nsConfig namespaceConfig) {
-	var tlsFlagsConfig = tlsFlagsConfig(nsConfig.namespace)
+	tlsFlagsConfig := tlsFlagsConfig(nsConfig.namespace)
 	tlsFlagsConfig.AddFlags(flagSet)
 
 	if nsConfig.namespace != primaryStorageConfig {
@@ -235,7 +236,7 @@ func tlsFlagsConfig(namespace string) tlscfg.ClientFlagsConfig {
 }
 
 func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
-	var tlsFlagsConfig = tlsFlagsConfig(cfg.namespace)
+	tlsFlagsConfig := tlsFlagsConfig(cfg.namespace)
 	if cfg.namespace != primaryStorageConfig {
 		cfg.Enabled = v.GetBool(cfg.namespace + suffixEnabled)
 	}
@@ -254,7 +255,12 @@ func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
 	cfg.Authenticator.Basic.Username = v.GetString(cfg.namespace + suffixUsername)
 	cfg.Authenticator.Basic.Password = v.GetString(cfg.namespace + suffixPassword)
 	cfg.DisableCompression = v.GetBool(cfg.namespace + suffixDisableCompression)
-	cfg.TLS = tlsFlagsConfig.InitFromViper(v)
+	var err error
+	cfg.TLS, err = tlsFlagsConfig.InitFromViper(v)
+	if err != nil {
+		// TODO refactor to be able to return error
+		log.Fatal(err)
+	}
 }
 
 // GetPrimary returns primary configuration.
@@ -301,5 +307,5 @@ func (opt *Options) TagIndexWhitelist() []string {
 
 // stripWhiteSpace removes all whitespace characters from a string
 func stripWhiteSpace(str string) string {
-	return strings.Replace(str, " ", "", -1)
+	return strings.ReplaceAll(str, " ", "")
 }

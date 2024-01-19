@@ -53,7 +53,8 @@ var (
 		model.Float64(someDoubleTagKey, someDoubleTagValue),
 		model.Binary(someBinaryTagKey, someBinaryTagValue),
 	}
-	someDBTags = []KeyValue{
+	someWarnings = []string{"warning text 1", "warning text 2"}
+	someDBTags   = []KeyValue{
 		{
 			Key:         someStringTagKey,
 			ValueType:   stringType,
@@ -202,7 +203,7 @@ func TestFromSpan(t *testing.T) {
 		}
 		expectedSpan := getTestJaegerSpan()
 		actualJSpan, err := ToDomain(testDBSpan)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if !assert.EqualValues(t, expectedSpan, actualJSpan) {
 			for _, diff := range pretty.Diff(expectedSpan, actualJSpan) {
 				t.Log(diff)
@@ -280,11 +281,66 @@ func TestGenerateHashCode(t *testing.T) {
 	hc1, err1 := model.HashCode(span1)
 	hc2, err2 := model.HashCode(span2)
 	assert.Equal(t, hc1, hc2)
-	assert.NoError(t, err1)
-	assert.NoError(t, err2)
+	require.NoError(t, err1)
+	require.NoError(t, err2)
 
 	span2.Tags = append(span2.Tags, model.String("xyz", "some new tag"))
 	hc2, err2 = model.HashCode(span2)
 	assert.NotEqual(t, hc1, hc2)
-	assert.NoError(t, err2)
+	require.NoError(t, err2)
+}
+
+func TestFromDBTagsWithoutWarnings(t *testing.T) {
+	span := getTestJaegerSpan()
+	dbSpan := FromDomain(span)
+
+	tags, err := converter{}.fromDBTags(dbSpan.Tags)
+	require.NoError(t, err)
+	assert.Equal(t, tags, span.Tags)
+}
+
+func TestFromDBTagsWithWarnings(t *testing.T) {
+	span := getTestJaegerSpan()
+	span.Warnings = someWarnings
+	dbSpan := FromDomain(span)
+
+	tags, err := converter{}.fromDBTags(dbSpan.Tags)
+	require.NoError(t, err)
+	assert.Equal(t, tags, span.Tags)
+}
+
+func TestFromDBLogsWithWarnings(t *testing.T) {
+	span := getTestJaegerSpan()
+	span.Warnings = someWarnings
+	dbSpan := FromDomain(span)
+
+	logs, err := converter{}.fromDBLogs(dbSpan.Logs)
+	require.NoError(t, err)
+	assert.Equal(t, logs, span.Logs)
+}
+
+func TestFromDBProcessWithWarnings(t *testing.T) {
+	span := getTestJaegerSpan()
+	span.Warnings = someWarnings
+	dbSpan := FromDomain(span)
+
+	process, err := converter{}.fromDBProcess(dbSpan.Process)
+	require.NoError(t, err)
+	assert.Equal(t, process, span.Process)
+}
+
+func TestFromDBWarnings(t *testing.T) {
+	span := getTestJaegerSpan()
+	span.Warnings = someWarnings
+	dbSpan := FromDomain(span)
+
+	warnings, err := converter{}.fromDBWarnings(dbSpan.Tags)
+	require.NoError(t, err)
+	assert.Equal(t, warnings, span.Warnings)
+}
+
+func TestFailingFromDBWarnings(t *testing.T) {
+	badDBWarningTags := []KeyValue{{Key: warningStringPrefix + "1", ValueType: "invalidValueType"}}
+	span := getCustomSpan(badDBWarningTags, someDBProcess, someDBLogs, someDBRefs)
+	failingDBSpanTransform(t, span, notValidTagTypeErrStr)
 }

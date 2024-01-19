@@ -21,9 +21,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/cmd/esmapping-generator/app"
 	"github.com/jaegertracing/jaeger/pkg/es/mocks"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestIsValidOption(t *testing.T) {
@@ -31,7 +33,8 @@ func TestIsValidOption(t *testing.T) {
 		name          string
 		arg           string
 		expectedValue bool
-	}{{name: "span mapping", arg: "jaeger-span", expectedValue: true},
+	}{
+		{name: "span mapping", arg: "jaeger-span", expectedValue: true},
 		{name: "service mapping", arg: "jaeger-service", expectedValue: true},
 		{name: "Invalid mapping", arg: "dependency-service", expectedValue: false},
 	}
@@ -88,11 +91,15 @@ func Test_getMappingAsString(t *testing.T) {
 
 			// Validate
 			if tt.wantErr != nil {
-				assert.EqualError(t, err, tt.wantErr.Error())
+				require.EqualError(t, err, tt.wantErr.Error())
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -22,16 +22,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	yaml "gopkg.in/yaml.v2"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/discovery"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
 )
@@ -59,8 +59,11 @@ func TestBuilderFromConfig(t *testing.T) {
 		t,
 		[]string{"127.0.0.1:14268", "127.0.0.1:14269"},
 		cfg.CollectorHostPorts)
-	r, err := cfg.CreateConnection(zap.NewNop(), metrics.NullFactory)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := cfg.CreateConnection(ctx, zap.NewNop(), metrics.NullFactory)
 	require.NoError(t, err)
+	defer r.Close()
 	assert.NotNil(t, r)
 }
 
@@ -149,9 +152,12 @@ func TestBuilderWithCollectors(t *testing.T) {
 			cfg.Notifier = test.notifier
 			cfg.Discoverer = test.discoverer
 
-			conn, err := cfg.CreateConnection(zap.NewNop(), metrics.NullFactory)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			conn, err := cfg.CreateConnection(ctx, zap.NewNop(), metrics.NullFactory)
 			if test.expectedError == "" {
 				require.NoError(t, err)
+				defer conn.Close()
 				require.NotNil(t, conn)
 				if test.checkConnectionState {
 					assertConnectionState(t, conn, test.expectedState)
@@ -207,10 +213,12 @@ func TestProxyBuilder(t *testing.T) {
 			expectError: false,
 		},
 	}
-
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			proxy, err := NewCollectorProxy(test.grpcBuilder, nil, metrics.NullFactory, zap.NewNop())
+			proxy, err := NewCollectorProxy(ctx, test.grpcBuilder, nil, metrics.NullFactory, zap.NewNop())
+
 			if test.expectError {
 				require.Error(t, err)
 			} else {
@@ -220,8 +228,8 @@ func TestProxyBuilder(t *testing.T) {
 				assert.NotNil(t, proxy.GetReporter())
 				assert.NotNil(t, proxy.GetManager())
 
-				assert.Nil(t, proxy.Close())
-				assert.EqualError(t, proxy.Close(), "rpc error: code = Canceled desc = grpc: the client connection is closing")
+				require.NoError(t, proxy.Close())
+				require.EqualError(t, proxy.Close(), "rpc error: code = Canceled desc = grpc: the client connection is closing")
 			}
 		})
 	}
@@ -333,6 +341,8 @@ func TestProxyClientTLS(t *testing.T) {
 			expectError: false,
 		},
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var opts []grpc.ServerOption
@@ -342,6 +352,7 @@ func TestProxyClientTLS(t *testing.T) {
 				opts = []grpc.ServerOption{grpc.Creds(credentials.NewTLS(tlsCfg))}
 			}
 
+			defer test.serverTLS.Close()
 			spanHandler := &mockSpanHandler{}
 			s, addr := initializeGRPCTestServer(t, func(s *grpc.Server) {
 				api_v2.RegisterCollectorServiceServer(s, spanHandler)
@@ -349,6 +360,7 @@ func TestProxyClientTLS(t *testing.T) {
 			defer s.Stop()
 
 			mFactory := metricstest.NewFactory(time.Microsecond)
+			defer mFactory.Stop()
 			_, port, _ := net.SplitHostPort(addr.String())
 
 			grpcBuilder := &ConnBuilder{
@@ -356,6 +368,7 @@ func TestProxyClientTLS(t *testing.T) {
 				TLS:                test.clientTLS,
 			}
 			proxy, err := NewCollectorProxy(
+				ctx,
 				grpcBuilder,
 				nil,
 				mFactory,
@@ -369,7 +382,7 @@ func TestProxyClientTLS(t *testing.T) {
 
 			r := proxy.GetReporter()
 
-			err = r.EmitBatch(context.Background(), &jaeger.Batch{Spans: []*jaeger.Span{{OperationName: "op"}}, Process: &jaeger.Process{ServiceName: "service"}})
+			err = r.EmitBatch(ctx, &jaeger.Batch{Spans: []*jaeger.Span{{OperationName: "op"}}, Process: &jaeger.Process{ServiceName: "service"}})
 
 			if test.expectError {
 				require.Error(t, err)
@@ -377,7 +390,7 @@ func TestProxyClientTLS(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			require.Nil(t, proxy.Close())
+			require.NoError(t, proxy.Close())
 		})
 	}
 }
@@ -394,4 +407,37 @@ func assertConnectionState(t *testing.T, conn *grpc.ClientConn, expectedState st
 			break
 		}
 	}
+}
+
+type fakeInterceptor struct {
+	isCalled bool
+}
+
+func (f *fakeInterceptor) intercept(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	f.isCalled = true
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+func (f *fakeInterceptor) assertCalled(t *testing.T) {
+	assert.True(t, f.isCalled)
+}
+
+func TestBuilderWithAdditionalDialOptions(t *testing.T) {
+	fi := fakeInterceptor{}
+	defer fi.assertCalled(t)
+
+	cb := ConnBuilder{
+		CollectorHostPorts:    []string{"127.0.0.1:14268"},
+		AdditionalDialOptions: []grpc.DialOption{grpc.WithUnaryInterceptor(fi.intercept)},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := cb.CreateConnection(ctx, zap.NewNop(), metrics.NullFactory)
+	require.NoError(t, err)
+	defer r.Close()
+	assert.NotNil(t, r)
+
+	err = r.Invoke(context.Background(), "test", map[string]string{}, map[string]string{}, []grpc.CallOption{}...)
+	require.Error(t, err, "should error because no server is running")
 }

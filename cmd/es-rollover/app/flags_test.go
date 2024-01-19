@@ -41,14 +41,16 @@ func TestBindFlags(t *testing.T) {
 		"--es.password=qwerty123",
 		"--es.use-ilm=true",
 		"--es.ilm-policy-name=jaeger-ilm",
+		"--skip-dependencies=true",
 	})
 	require.NoError(t, err)
 
 	c.InitFromViper(v)
-	assert.Equal(t, "tenant1", c.IndexPrefix)
-	assert.Equal(t, true, c.Archive)
+	assert.Equal(t, "tenant1-", c.IndexPrefix)
+	assert.True(t, c.Archive)
 	assert.Equal(t, 150, c.Timeout)
 	assert.Equal(t, "admin", c.Username)
 	assert.Equal(t, "qwerty123", c.Password)
 	assert.Equal(t, "jaeger-ilm", c.ILMPolicyName)
+	assert.True(t, c.SkipDependencies)
 }

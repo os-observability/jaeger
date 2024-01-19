@@ -17,9 +17,12 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	zipkin2 "github.com/jaegertracing/jaeger/cmd/collector/app/sanitizer/zipkin"
 	"github.com/jaegertracing/jaeger/model"
@@ -44,7 +47,7 @@ func NewReporter(conn *grpc.ClientConn, agentTags map[string]string, logger *zap
 		collector: api_v2.NewCollectorServiceClient(conn),
 		agentTags: makeModelKeyValue(agentTags),
 		logger:    logger,
-		sanitizer: zipkin2.NewChainedSanitizer(zipkin2.StandardSanitizers...),
+		sanitizer: zipkin2.NewChainedSanitizer(zipkin2.NewStandardSanitizers()...),
 	}
 }
 
@@ -71,12 +74,18 @@ func (r *Reporter) send(ctx context.Context, spans []*model.Span, process *model
 	req := &api_v2.PostSpansRequest{Batch: batch}
 	_, err := r.collector.PostSpans(ctx, req)
 	if err != nil {
-		r.logger.Error("Could not send spans over gRPC", zap.Error(err))
+		stat, ok := status.FromError(err)
+		if ok && stat.Code() == codes.PermissionDenied && stat.Message() == "missing tenant header" {
+			r.logger.Debug("Could not report untenanted spans over gRPC", zap.Error(err))
+		} else {
+			r.logger.Error("Could not send spans over gRPC", zap.Error(err))
+		}
+		err = fmt.Errorf("failed to export spans: %w", err)
 	}
 	return err
 }
 
-// addTags appends jaeger tags for the agent to every span it sends to the collector.
+// addProcessTags appends jaeger tags for the agent to every span it sends to the collector.
 func addProcessTags(spans []*model.Span, process *model.Process, agentTags []model.KeyValue) ([]*model.Span, *model.Process) {
 	if len(agentTags) == 0 {
 		return spans, process

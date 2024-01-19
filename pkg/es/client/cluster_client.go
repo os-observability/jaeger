@@ -36,10 +36,9 @@ func (c *ClusterClient) Version() (uint, error) {
 		TagLine string                 `json:"tagline"`
 	}
 	body, err := c.request(elasticRequest{
-		endpoint: "/",
+		endpoint: "",
 		method:   http.MethodGet,
 	})
-
 	if err != nil {
 		return 0, err
 	}
@@ -51,14 +50,14 @@ func (c *ClusterClient) Version() (uint, error) {
 	versionField := info.Version["number"]
 	versionNumber, isString := versionField.(string)
 	if !isString {
-		return 0, fmt.Errorf("invalid version format: %w", versionField)
+		return 0, fmt.Errorf("invalid version format: %v", versionField)
 	}
 	version := strings.Split(versionNumber, ".")
 	major, err := strconv.ParseUint(version[0], 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid version format: %s", version[0])
 	}
-	if strings.Contains(info.TagLine, "OpenSearch") && major == 1 {
+	if strings.Contains(info.TagLine, "OpenSearch") && (major == 1 || major == 2) {
 		return 7, nil
 	}
 	return uint(major), nil

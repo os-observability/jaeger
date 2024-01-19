@@ -19,7 +19,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,6 +26,7 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
 	"github.com/jaegertracing/jaeger/model"
 	_ "github.com/jaegertracing/jaeger/pkg/gogocodec" // force gogo codec registration
+	"github.com/jaegertracing/jaeger/pkg/jtracer"
 	"github.com/jaegertracing/jaeger/plugin/metrics/disabled"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2/metrics"
@@ -53,8 +53,41 @@ type GRPCHandler struct {
 	queryService        *querysvc.QueryService
 	metricsQueryService querysvc.MetricsQueryService
 	logger              *zap.Logger
-	tracer              opentracing.Tracer
+	tracer              *jtracer.JTracer
 	nowFn               func() time.Time
+}
+
+// GRPCHandlerOptions contains optional members of GRPCHandler.
+type GRPCHandlerOptions struct {
+	Logger *zap.Logger
+	Tracer *jtracer.JTracer
+	NowFn  func() time.Time
+}
+
+// NewGRPCHandler returns a GRPCHandler.
+func NewGRPCHandler(queryService *querysvc.QueryService,
+	metricsQueryService querysvc.MetricsQueryService,
+	options GRPCHandlerOptions,
+) *GRPCHandler {
+	if options.Logger == nil {
+		options.Logger = zap.NewNop()
+	}
+
+	if options.Tracer == nil {
+		options.Tracer = jtracer.NoOp()
+	}
+
+	if options.NowFn == nil {
+		options.NowFn = time.Now
+	}
+
+	return &GRPCHandler{
+		queryService:        queryService,
+		metricsQueryService: metricsQueryService,
+		logger:              options.Logger,
+		tracer:              options.Tracer,
+		nowFn:               options.NowFn,
+	}
 }
 
 var _ api_v2.QueryServiceServer = (*GRPCHandler)(nil)
@@ -68,7 +101,7 @@ func (g *GRPCHandler) GetTrace(r *api_v2.GetTraceRequest, stream api_v2.QuerySer
 		return errUninitializedTraceID
 	}
 	trace, err := g.queryService.GetTrace(stream.Context(), r.TraceID)
-	if err == spanstore.ErrTraceNotFound {
+	if errors.Is(err, spanstore.ErrTraceNotFound) {
 		g.logger.Error(msgTraceNotFound, zap.Error(err))
 		return status.Errorf(codes.NotFound, "%s: %v", msgTraceNotFound, err)
 	}
@@ -88,7 +121,7 @@ func (g *GRPCHandler) ArchiveTrace(ctx context.Context, r *api_v2.ArchiveTraceRe
 		return nil, errUninitializedTraceID
 	}
 	err := g.queryService.ArchiveTrace(ctx, r.TraceID)
-	if err == spanstore.ErrTraceNotFound {
+	if errors.Is(err, spanstore.ErrTraceNotFound) {
 		g.logger.Error("trace not found", zap.Error(err))
 		return nil, status.Errorf(codes.NotFound, "%s: %v", msgTraceNotFound, err)
 	}

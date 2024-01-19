@@ -21,15 +21,24 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/uber/jaeger-lib/metrics"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
+	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
+	"github.com/jaegertracing/jaeger/cmd/collector/app/handler"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sampling/strategystore"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/server"
 	"github.com/jaegertracing/jaeger/pkg/healthcheck"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
+)
+
+const (
+	metricNumWorkers = "collector.num-workers"
+	metricQueueSize  = "collector.queue-size"
 )
 
 // Collector returns the collector as a manageable unit of work
@@ -44,13 +53,16 @@ type Collector struct {
 	hCheck         *healthcheck.HealthCheck
 	spanProcessor  processor.SpanProcessor
 	spanHandlers   *SpanHandlers
+	tenancyMgr     *tenancy.Manager
 
 	// state, read only
-	hServer                  *http.Server
-	zkServer                 *http.Server
-	grpcServer               *grpc.Server
-	tlsGRPCCertWatcherCloser io.Closer
-	tlsHTTPCertWatcherCloser io.Closer
+	hServer                    *http.Server
+	grpcServer                 *grpc.Server
+	otlpReceiver               receiver.Traces
+	zipkinReceiver             receiver.Traces
+	tlsGRPCCertWatcherCloser   io.Closer
+	tlsHTTPCertWatcherCloser   io.Closer
+	tlsZipkinCertWatcherCloser io.Closer
 }
 
 // CollectorParams to construct a new Jaeger Collector.
@@ -62,6 +74,7 @@ type CollectorParams struct {
 	StrategyStore  strategystore.StrategyStore
 	Aggregator     strategystore.Aggregator
 	HealthCheck    *healthcheck.HealthCheck
+	TenancyMgr     *tenancy.Manager
 }
 
 // New constructs a new collector component, ready to be started
@@ -74,16 +87,18 @@ func New(params *CollectorParams) *Collector {
 		strategyStore:  params.StrategyStore,
 		aggregator:     params.Aggregator,
 		hCheck:         params.HealthCheck,
+		tenancyMgr:     params.TenancyMgr,
 	}
 }
 
 // Start the component and underlying dependencies
-func (c *Collector) Start(builderOpts *CollectorOptions) error {
+func (c *Collector) Start(options *flags.CollectorOptions) error {
 	handlerBuilder := &SpanHandlerBuilder{
 		SpanWriter:     c.spanWriter,
-		CollectorOpts:  *builderOpts,
+		CollectorOpts:  options,
 		Logger:         c.logger,
 		MetricsFactory: c.metricsFactory,
+		TenancyMgr:     c.tenancyMgr,
 	}
 
 	var additionalProcessors []ProcessSpan
@@ -95,69 +110,76 @@ func (c *Collector) Start(builderOpts *CollectorOptions) error {
 	c.spanHandlers = handlerBuilder.BuildHandlers(c.spanProcessor)
 
 	grpcServer, err := server.StartGRPCServer(&server.GRPCServerParams{
-		HostPort:                builderOpts.CollectorGRPCHostPort,
+		HostPort:                options.GRPC.HostPort,
 		Handler:                 c.spanHandlers.GRPCHandler,
-		TLSConfig:               builderOpts.TLSGRPC,
+		TLSConfig:               options.GRPC.TLS,
 		SamplingStore:           c.strategyStore,
 		Logger:                  c.logger,
-		MaxReceiveMessageLength: builderOpts.CollectorGRPCMaxReceiveMessageLength,
-		MaxConnectionAge:        builderOpts.CollectorGRPCMaxConnectionAge,
-		MaxConnectionAgeGrace:   builderOpts.CollectorGRPCMaxConnectionAgeGrace,
+		MaxReceiveMessageLength: options.GRPC.MaxReceiveMessageLength,
+		MaxConnectionAge:        options.GRPC.MaxConnectionAge,
+		MaxConnectionAgeGrace:   options.GRPC.MaxConnectionAgeGrace,
 	})
 	if err != nil {
-		return fmt.Errorf("could not start gRPC collector %w", err)
+		return fmt.Errorf("could not start gRPC server: %w", err)
 	}
 	c.grpcServer = grpcServer
 
 	httpServer, err := server.StartHTTPServer(&server.HTTPServerParams{
-		HostPort:       builderOpts.CollectorHTTPHostPort,
+		HostPort:       options.HTTP.HostPort,
 		Handler:        c.spanHandlers.JaegerBatchesHandler,
-		TLSConfig:      builderOpts.TLSHTTP,
+		TLSConfig:      options.HTTP.TLS,
 		HealthCheck:    c.hCheck,
 		MetricsFactory: c.metricsFactory,
 		SamplingStore:  c.strategyStore,
 		Logger:         c.logger,
 	})
 	if err != nil {
-		return fmt.Errorf("could not start the HTTP server %w", err)
+		return fmt.Errorf("could not start HTTP server: %w", err)
 	}
 	c.hServer = httpServer
 
-	c.tlsGRPCCertWatcherCloser = &builderOpts.TLSGRPC
-	c.tlsHTTPCertWatcherCloser = &builderOpts.TLSHTTP
-	zkServer, err := server.StartZipkinServer(&server.ZipkinServerParams{
-		HostPort:       builderOpts.CollectorZipkinHTTPHostPort,
-		Handler:        c.spanHandlers.ZipkinSpansHandler,
-		HealthCheck:    c.hCheck,
-		AllowedHeaders: builderOpts.CollectorZipkinAllowedHeaders,
-		AllowedOrigins: builderOpts.CollectorZipkinAllowedOrigins,
-		Logger:         c.logger,
-		MetricsFactory: c.metricsFactory,
-	})
-	if err != nil {
-		return fmt.Errorf("could not start the Zipkin server %w", err)
-	}
-	c.zkServer = zkServer
+	c.tlsGRPCCertWatcherCloser = &options.GRPC.TLS
+	c.tlsHTTPCertWatcherCloser = &options.HTTP.TLS
+	c.tlsZipkinCertWatcherCloser = &options.Zipkin.TLS
 
-	c.publishOpts(builderOpts)
+	if options.Zipkin.HTTPHostPort == "" {
+		c.logger.Info("Not listening for Zipkin HTTP traffic, port not configured")
+	} else {
+		zipkinReceiver, err := handler.StartZipkinReceiver(options, c.logger, c.spanProcessor, c.tenancyMgr)
+		if err != nil {
+			return fmt.Errorf("could not start Zipkin receiver: %w", err)
+		}
+		c.zipkinReceiver = zipkinReceiver
+
+	}
+
+	if options.OTLP.Enabled {
+		otlpReceiver, err := handler.StartOTLPReceiver(options, c.logger, c.spanProcessor, c.tenancyMgr)
+		if err != nil {
+			return fmt.Errorf("could not start OTLP receiver: %w", err)
+		}
+		c.otlpReceiver = otlpReceiver
+	}
+
+	c.publishOpts(options)
 
 	return nil
 }
 
-func (c *Collector) publishOpts(cOpts *CollectorOptions) {
+func (c *Collector) publishOpts(cOpts *flags.CollectorOptions) {
 	internalFactory := c.metricsFactory.Namespace(metrics.NSOptions{Name: "internal"})
-	internalFactory.Gauge(metrics.Options{Name: collectorNumWorkers}).Update(int64(cOpts.NumWorkers))
-	internalFactory.Gauge(metrics.Options{Name: collectorQueueSize}).Update(int64(cOpts.QueueSize))
+	internalFactory.Gauge(metrics.Options{Name: metricNumWorkers}).Update(int64(cOpts.NumWorkers))
+	internalFactory.Gauge(metrics.Options{Name: metricQueueSize}).Update(int64(cOpts.QueueSize))
 }
 
 // Close the component and all its underlying dependencies
 func (c *Collector) Close() error {
-	// gRPC server
+	// Stop gRPC server
 	if c.grpcServer != nil {
 		c.grpcServer.GracefulStop()
 	}
 
-	// HTTP server
+	// Stop HTTP server
 	if c.hServer != nil {
 		timeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := c.hServer.Shutdown(timeout); err != nil {
@@ -166,11 +188,20 @@ func (c *Collector) Close() error {
 		defer cancel()
 	}
 
-	// Zipkin server
-	if c.zkServer != nil {
+	// Stop Zipkin receiver
+	if c.zipkinReceiver != nil {
 		timeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := c.zkServer.Shutdown(timeout); err != nil {
-			c.logger.Fatal("failed to stop the Zipkin server", zap.Error(err))
+		if err := c.zipkinReceiver.Shutdown(timeout); err != nil {
+			c.logger.Fatal("failed to stop the Zipkin receiver", zap.Error(err))
+		}
+		defer cancel()
+	}
+
+	// Stop OpenTelemetry OTLP receiver
+	if c.otlpReceiver != nil {
+		timeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := c.otlpReceiver.Shutdown(timeout); err != nil {
+			c.logger.Fatal("failed to stop the OTLP receiver", zap.Error(err))
 		}
 		defer cancel()
 	}
@@ -189,6 +220,7 @@ func (c *Collector) Close() error {
 	// watchers actually never return errors from Close
 	_ = c.tlsGRPCCertWatcherCloser.Close()
 	_ = c.tlsHTTPCertWatcherCloser.Close()
+	_ = c.tlsZipkinCertWatcherCloser.Close()
 
 	return nil
 }

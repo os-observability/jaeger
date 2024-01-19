@@ -22,9 +22,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jaegertracing/jaeger/cmd/query/app/internal/api_v3"
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
 	"github.com/jaegertracing/jaeger/model"
-	"github.com/jaegertracing/jaeger/proto-gen/api_v3"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
 
@@ -33,23 +33,26 @@ type Handler struct {
 	QueryService *querysvc.QueryService
 }
 
+// remove me
 var _ api_v3.QueryServiceServer = (*Handler)(nil)
 
 // GetTrace implements api_v3.QueryServiceServer's GetTrace
 func (h *Handler) GetTrace(request *api_v3.GetTraceRequest, stream api_v3.QueryService_GetTraceServer) error {
 	traceID, err := model.TraceIDFromString(request.GetTraceId())
 	if err != nil {
-		return err
+		return fmt.Errorf("malform trace ID: %w", err)
 	}
 
 	trace, err := h.QueryService.GetTrace(stream.Context(), traceID)
 	if err != nil {
+		return fmt.Errorf("cannot retrieve trace: %w", err)
+	}
+	td, err := modelToOTLP(trace.GetSpans())
+	if err != nil {
 		return err
 	}
-	resourceSpans := jaegerSpansToOTLP(trace.GetSpans())
-	return stream.Send(&api_v3.SpansResponseChunk{
-		ResourceSpans: resourceSpans,
-	})
+	tracesData := api_v3.TracesData(td)
+	return stream.Send(&tracesData)
 }
 
 // FindTraces implements api_v3.QueryServiceServer's FindTraces
@@ -103,10 +106,12 @@ func (h *Handler) FindTraces(request *api_v3.FindTracesRequest, stream api_v3.Qu
 		return err
 	}
 	for _, t := range traces {
-		resourceSpans := jaegerSpansToOTLP(t.GetSpans())
-		stream.Send(&api_v3.SpansResponseChunk{
-			ResourceSpans: resourceSpans,
-		})
+		td, err := modelToOTLP(t.GetSpans())
+		if err != nil {
+			return err
+		}
+		tracesData := api_v3.TracesData(td)
+		stream.Send(&tracesData)
 	}
 	return nil
 }

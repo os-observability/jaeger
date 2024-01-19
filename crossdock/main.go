@@ -73,6 +73,7 @@ func main() {
 		}
 		handler.xHandler.ServeHTTP(w, r)
 	})
+	//nolint:gosec
 	http.ListenAndServe(":8080", nil)
 }
 
@@ -110,6 +111,7 @@ func is2xxStatusCode(statusCode int) bool {
 func httpHealthCheck(logger *zap.Logger, service, healthURL string) {
 	for i := 0; i < 240; i++ {
 		res, err := http.Get(healthURL)
+		res.Body.Close()
 		if err == nil && is2xxStatusCode(res.StatusCode) {
 			logger.Info("Health check successful", zap.String("service", service))
 			return

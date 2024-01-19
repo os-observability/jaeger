@@ -16,6 +16,7 @@ package shared
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -52,6 +53,7 @@ type grpcClient struct {
 	archiveWriterClient storage_v1.ArchiveSpanWriterPluginClient
 	capabilitiesClient  storage_v1.PluginCapabilitiesClient
 	depsReaderClient    storage_v1.DependenciesReaderPluginClient
+	streamWriterClient  storage_v1.StreamingSpanWriterPluginClient
 }
 
 func NewGRPCClient(c *grpc.ClientConn) *grpcClient {
@@ -62,6 +64,7 @@ func NewGRPCClient(c *grpc.ClientConn) *grpcClient {
 		archiveWriterClient: storage_v1.NewArchiveSpanWriterPluginClient(c),
 		capabilitiesClient:  storage_v1.NewPluginCapabilitiesClient(c),
 		depsReaderClient:    storage_v1.NewDependenciesReaderPluginClient(c),
+		streamWriterClient:  storage_v1.NewStreamingSpanWriterPluginClient(c),
 	}
 }
 
@@ -108,6 +111,10 @@ func (c *grpcClient) SpanReader() spanstore.Reader {
 // SpanWriter implements shared.StoragePlugin.
 func (c *grpcClient) SpanWriter() spanstore.Writer {
 	return c
+}
+
+func (c *grpcClient) StreamingSpanWriter() spanstore.Writer {
+	return newStreamingSpanWriter(c.streamWriterClient)
 }
 
 func (c *grpcClient) ArchiveSpanReader() spanstore.Reader {
@@ -195,7 +202,7 @@ func (c *grpcClient) FindTraces(ctx context.Context, query *spanstore.TraceQuery
 	var traces []*model.Trace
 	var trace *model.Trace
 	var traceID model.TraceID
-	for received, err := stream.Recv(); err != io.EOF; received, err = stream.Recv() {
+	for received, err := stream.Recv(); !errors.Is(err, io.EOF); received, err = stream.Recv() {
 		if err != nil {
 			return nil, fmt.Errorf("stream error: %w", err)
 		}
@@ -238,7 +245,6 @@ func (c *grpcClient) WriteSpan(ctx context.Context, span *model.Span) error {
 	_, err := c.writerClient.WriteSpan(ctx, &storage_v1.WriteSpanRequest{
 		Span: span,
 	})
-
 	if err != nil {
 		return fmt.Errorf("plugin error: %w", err)
 	}
@@ -278,14 +284,15 @@ func (c *grpcClient) Capabilities() (*Capabilities, error) {
 	}
 
 	return &Capabilities{
-		ArchiveSpanReader: capabilities.ArchiveSpanReader,
-		ArchiveSpanWriter: capabilities.ArchiveSpanWriter,
+		ArchiveSpanReader:   capabilities.ArchiveSpanReader,
+		ArchiveSpanWriter:   capabilities.ArchiveSpanWriter,
+		StreamingSpanWriter: capabilities.StreamingSpanWriter,
 	}, nil
 }
 
 func readTrace(stream storage_v1.SpanReaderPlugin_GetTraceClient) (*model.Trace, error) {
 	trace := model.Trace{}
-	for received, err := stream.Recv(); err != io.EOF; received, err = stream.Recv() {
+	for received, err := stream.Recv(); !errors.Is(err, io.EOF); received, err = stream.Recv() {
 		if err != nil {
 			if s, _ := status.FromError(err); s != nil {
 				if s.Message() == spanstore.ErrTraceNotFound.Error() {

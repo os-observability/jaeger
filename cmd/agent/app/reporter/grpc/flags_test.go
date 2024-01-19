@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaegertracing/jaeger/pkg/config"
 )
 
 func TestBindFlags(t *testing.T) {
@@ -29,12 +31,18 @@ func TestBindFlags(t *testing.T) {
 		cOpts    []string
 		expected *ConnBuilder
 	}{
-		{cOpts: []string{"--reporter.grpc.host-port=localhost:1111", "--reporter.grpc.retry.max=15"},
-			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111"}, MaxRetry: 15, DiscoveryMinPeers: 3}},
-		{cOpts: []string{"--reporter.grpc.host-port=localhost:1111,localhost:2222"},
-			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111", "localhost:2222"}, MaxRetry: defaultMaxRetry, DiscoveryMinPeers: 3}},
-		{cOpts: []string{"--reporter.grpc.host-port=localhost:1111,localhost:2222", "--reporter.grpc.discovery.min-peers=5"},
-			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111", "localhost:2222"}, MaxRetry: defaultMaxRetry, DiscoveryMinPeers: 5}},
+		{
+			cOpts:    []string{"--reporter.grpc.host-port=localhost:1111", "--reporter.grpc.retry.max=15"},
+			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111"}, MaxRetry: 15, DiscoveryMinPeers: 3},
+		},
+		{
+			cOpts:    []string{"--reporter.grpc.host-port=localhost:1111,localhost:2222"},
+			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111", "localhost:2222"}, MaxRetry: defaultMaxRetry, DiscoveryMinPeers: 3},
+		},
+		{
+			cOpts:    []string{"--reporter.grpc.host-port=localhost:1111,localhost:2222", "--reporter.grpc.discovery.min-peers=5"},
+			expected: &ConnBuilder{CollectorHostPorts: []string{"localhost:1111", "localhost:2222"}, MaxRetry: defaultMaxRetry, DiscoveryMinPeers: 5},
+		},
 	}
 	for _, test := range tests {
 		v := viper.New()
@@ -46,7 +54,20 @@ func TestBindFlags(t *testing.T) {
 
 		err := command.ParseFlags(test.cOpts)
 		require.NoError(t, err)
-		b := new(ConnBuilder).InitFromViper(v)
+		b, err := new(ConnBuilder).InitFromViper(v)
+		require.NoError(t, err)
 		assert.Equal(t, test.expected, b)
 	}
+}
+
+func TestBindTLSFlagFailure(t *testing.T) {
+	v, command := config.Viperize(AddFlags)
+	err := command.ParseFlags([]string{
+		"--reporter.grpc.tls.enabled=false",
+		"--reporter.grpc.tls.cert=blah", // invalid unless tls.enabled
+	})
+	require.NoError(t, err)
+	_, err = new(ConnBuilder).InitFromViper(v)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to process TLS options")
 }

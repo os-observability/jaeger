@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
 	"go.uber.org/zap"
+
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 )
 
 func TestClosingSignalEmitted(t *testing.T) {
@@ -147,7 +148,7 @@ func TestNoPanicForPartitionIfDeadlockDetectorDisabled(t *testing.T) {
 	w.close()
 }
 
-//same as TestNoClosingSignalIfMessagesProcessedInInterval but with disabled deadlock detector
+// same as TestNoClosingSignalIfMessagesProcessedInInterval but with disabled deadlock detector
 func TestApiCompatibilityWhenDeadlockDetectorDisabled(t *testing.T) {
 	mf := metricstest.NewFactory(0)
 	l, _ := zap.NewDevelopment()

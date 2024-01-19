@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 // TestTBufferedReadTransport tests the TBufferedReadTransport
@@ -28,12 +30,12 @@ func TestTBufferedReadTransport(t *testing.T) {
 	buffer := bytes.NewBuffer([]byte("testString"))
 	trans, err := NewTBufferedReadTransport(buffer)
 	require.NotNil(t, trans)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, uint64(10), trans.RemainingBytes())
 
 	firstRead := make([]byte, 4)
 	n, err := trans.Read(firstRead)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 4, n)
 	require.Equal(t, []byte("test"), firstRead)
 	require.Equal(t, uint64(6), trans.RemainingBytes())
@@ -51,21 +53,25 @@ func TestTBufferedReadTransportEmptyFunctions(t *testing.T) {
 	byteArr := make([]byte, 1)
 	trans, err := NewTBufferedReadTransport(bytes.NewBuffer(byteArr))
 	require.NotNil(t, trans)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = trans.Open()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = trans.Close()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = trans.Flush(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	n, err := trans.Write(byteArr)
 	require.Equal(t, 1, n)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	isOpen := trans.IsOpen()
 	require.True(t, isOpen)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

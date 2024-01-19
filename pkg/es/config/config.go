@@ -29,15 +29,17 @@ import (
 	"sync"
 	"time"
 
+	esV8 "github.com/elastic/go-elasticsearch/v8"
 	"github.com/olivere/elastic"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zapgrpc"
 
 	"github.com/jaegertracing/jaeger/pkg/bearertoken"
 	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/es"
 	eswrapper "github.com/jaegertracing/jaeger/pkg/es/wrapper"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	storageMetrics "github.com/jaegertracing/jaeger/storage/spanstore/metrics"
 )
 
@@ -48,6 +50,7 @@ type Configuration struct {
 	Username                       string         `mapstructure:"username"`
 	Password                       string         `mapstructure:"password" json:"-"`
 	TokenFilePath                  string         `mapstructure:"token_file"`
+	PasswordFilePath               string         `mapstructure:"password_file"`
 	AllowTokenFromContext          bool           `mapstructure:"-"`
 	Sniffer                        bool           `mapstructure:"sniffer"` // https://github.com/olivere/elastic/wiki/Sniffing
 	SnifferTLSEnabled              bool           `mapstructure:"sniffer_tls_enabled"`
@@ -55,6 +58,9 @@ type Configuration struct {
 	MaxSpanAge                     time.Duration  `yaml:"max_span_age" mapstructure:"-"` // configures the maximum lookback on span reads
 	NumShards                      int64          `yaml:"shards" mapstructure:"num_shards"`
 	NumReplicas                    int64          `yaml:"replicas" mapstructure:"num_replicas"`
+	PrioritySpanTemplate           int64          `yaml:"priority_span_template" mapstructure:"priority_span_template"`
+	PriorityServiceTemplate        int64          `yaml:"priority_service_template" mapstructure:"priority_service_template"`
+	PriorityDependenciesTemplate   int64          `yaml:"priority_dependencies_template" mapstructure:"priority_dependencies_template"`
 	Timeout                        time.Duration  `validate:"min=500" mapstructure:"-"`
 	BulkSize                       int            `mapstructure:"-"`
 	BulkWorkers                    int            `mapstructure:"-"`
@@ -91,36 +97,8 @@ type TagsAsFields struct {
 	Include string `mapstructure:"include"`
 }
 
-// ClientBuilder creates new es.Client
-type ClientBuilder interface {
-	NewClient(logger *zap.Logger, metricsFactory metrics.Factory) (es.Client, error)
-	GetRemoteReadClusters() []string
-	GetNumShards() int64
-	GetNumReplicas() int64
-	GetMaxSpanAge() time.Duration
-	GetMaxDocCount() int
-	GetIndexPrefix() string
-	GetIndexDateLayoutSpans() string
-	GetIndexDateLayoutServices() string
-	GetIndexDateLayoutDependencies() string
-	GetIndexRolloverFrequencySpansDuration() time.Duration
-	GetIndexRolloverFrequencyServicesDuration() time.Duration
-	GetTagsFilePath() string
-	GetAllTagsAsFields() bool
-	GetTagDotReplacement() string
-	GetUseReadWriteAliases() bool
-	GetTokenFilePath() string
-	IsStorageEnabled() bool
-	IsCreateIndexTemplates() bool
-	GetVersion() uint
-	TagKeysAsFields() ([]string, error)
-	GetUseILM() bool
-	GetLogLevel() string
-	GetSendGetBodyAs() string
-}
-
 // NewClient creates a new ElasticSearch client
-func (c *Configuration) NewClient(logger *zap.Logger, metricsFactory metrics.Factory) (es.Client, error) {
+func NewClient(c *Configuration, logger *zap.Logger, metricsFactory metrics.Factory) (es.Client, error) {
 	if len(c.Servers) < 1 {
 		return nil, errors.New("no servers specified")
 	}
@@ -137,7 +115,7 @@ func (c *Configuration) NewClient(logger *zap.Logger, metricsFactory metrics.Fac
 	sm := storageMetrics.NewWriteMetrics(metricsFactory, "bulk_index")
 	m := sync.Map{}
 
-	service, err := rawClient.BulkProcessor().
+	bulkProc, err := rawClient.BulkProcessor().
 		Before(func(id int64, requests []elastic.BulkableRequest) {
 			m.Store(id, time.Now())
 		}).
@@ -201,12 +179,38 @@ func (c *Configuration) NewClient(logger *zap.Logger, metricsFactory metrics.Fac
 				logger.Info("OpenSearch 1.x detected, using ES 7.x index mappings")
 				esVersion = 7
 			}
+			if pingResult.Version.Number[0] == '2' {
+				logger.Info("OpenSearch 2.x detected, using ES 7.x index mappings")
+				esVersion = 7
+			}
 		}
 		logger.Info("Elasticsearch detected", zap.Int("version", esVersion))
 		c.Version = uint(esVersion)
 	}
 
-	return eswrapper.WrapESClient(rawClient, service, c.Version), nil
+	var rawClientV8 *esV8.Client
+	if c.Version >= 8 {
+		rawClientV8, err = newElasticsearchV8(c, logger)
+		if err != nil {
+			return nil, fmt.Errorf("error creating v8 client: %w", err)
+		}
+	}
+
+	return eswrapper.WrapESClient(rawClient, bulkProc, c.Version, rawClientV8), nil
+}
+
+func newElasticsearchV8(c *Configuration, logger *zap.Logger) (*esV8.Client, error) {
+	var options esV8.Config
+	options.Addresses = c.Servers
+	options.Username = c.Username
+	options.Password = c.Password
+	options.DiscoverNodesOnStart = c.Sniffer
+	transport, err := GetHTTPRoundTripper(c, logger)
+	if err != nil {
+		return nil, err
+	}
+	options.Transport = transport
+	return esV8.NewClient(options)
 }
 
 // ApplyDefaults copies settings from source unless its own value is non-zero.
@@ -231,6 +235,15 @@ func (c *Configuration) ApplyDefaults(source *Configuration) {
 	}
 	if c.NumReplicas == 0 {
 		c.NumReplicas = source.NumReplicas
+	}
+	if c.PrioritySpanTemplate == 0 {
+		c.PrioritySpanTemplate = source.PrioritySpanTemplate
+	}
+	if c.PriorityServiceTemplate == 0 {
+		c.PriorityServiceTemplate = source.PriorityServiceTemplate
+	}
+	if c.PrioritySpanTemplate == 0 {
+		c.PriorityDependenciesTemplate = source.PriorityDependenciesTemplate
 	}
 	if c.BulkSize == 0 {
 		c.BulkSize = source.BulkSize
@@ -270,51 +283,6 @@ func (c *Configuration) ApplyDefaults(source *Configuration) {
 	}
 }
 
-// GetRemoteReadClusters returns list of remote read clusters
-func (c *Configuration) GetRemoteReadClusters() []string {
-	return c.RemoteReadClusters
-}
-
-// GetNumShards returns number of shards from Configuration
-func (c *Configuration) GetNumShards() int64 {
-	return c.NumShards
-}
-
-// GetNumReplicas returns number of replicas from Configuration
-func (c *Configuration) GetNumReplicas() int64 {
-	return c.NumReplicas
-}
-
-// GetMaxSpanAge returns max span age from Configuration
-func (c *Configuration) GetMaxSpanAge() time.Duration {
-	return c.MaxSpanAge
-}
-
-// GetMaxDocCount returns the maximum number of documents that a query should return
-func (c *Configuration) GetMaxDocCount() int {
-	return c.MaxDocCount
-}
-
-// GetIndexPrefix returns index prefix
-func (c *Configuration) GetIndexPrefix() string {
-	return c.IndexPrefix
-}
-
-// GetIndexDateLayoutSpans returns jaeger-span index date layout
-func (c *Configuration) GetIndexDateLayoutSpans() string {
-	return c.IndexDateLayoutSpans
-}
-
-// GetIndexDateLayoutServices returns jaeger-service index date layout
-func (c *Configuration) GetIndexDateLayoutServices() string {
-	return c.IndexDateLayoutServices
-}
-
-// GetIndexDateLayoutDependencies returns jaeger-dependencies index date layout
-func (c *Configuration) GetIndexDateLayoutDependencies() string {
-	return c.IndexDateLayoutDependencies
-}
-
 // GetIndexRolloverFrequencySpansDuration returns jaeger-span index rollover frequency duration
 func (c *Configuration) GetIndexRolloverFrequencySpansDuration() time.Duration {
 	if c.IndexRolloverFrequencySpans == "hour" {
@@ -329,62 +297,6 @@ func (c *Configuration) GetIndexRolloverFrequencyServicesDuration() time.Duratio
 		return -1 * time.Hour
 	}
 	return -24 * time.Hour
-}
-
-// GetTagsFilePath returns a path to file containing tag keys
-func (c *Configuration) GetTagsFilePath() string {
-	return c.Tags.File
-}
-
-// GetAllTagsAsFields returns true if all tags should be stored as object fields
-func (c *Configuration) GetAllTagsAsFields() bool {
-	return c.Tags.AllAsFields
-}
-
-// GetVersion returns Elasticsearch version
-func (c *Configuration) GetVersion() uint {
-	return c.Version
-}
-
-// GetTagDotReplacement returns character is used to replace dots in tag keys, when
-// the tag is stored as object field.
-func (c *Configuration) GetTagDotReplacement() string {
-	return c.Tags.DotReplacement
-}
-
-// GetUseReadWriteAliases indicates whether read alias should be used
-func (c *Configuration) GetUseReadWriteAliases() bool {
-	return c.UseReadWriteAliases
-}
-
-// GetUseILM indicates whether ILM should be used
-func (c *Configuration) GetUseILM() bool {
-	return c.UseILM
-}
-
-// GetLogLevel returns the log-level the ES client should log at.
-func (c *Configuration) GetLogLevel() string {
-	return c.LogLevel
-}
-
-// GetSendGetBodyAs returns the SendGetBodyAs the ES client should use.
-func (c *Configuration) GetSendGetBodyAs() string {
-	return c.SendGetBodyAs
-}
-
-// GetTokenFilePath returns file path containing the bearer token
-func (c *Configuration) GetTokenFilePath() string {
-	return c.TokenFilePath
-}
-
-// IsStorageEnabled determines whether storage is enabled
-func (c *Configuration) IsStorageEnabled() bool {
-	return c.Enabled
-}
-
-// IsCreateIndexTemplates determines whether index templates should be created or not
-func (c *Configuration) IsCreateIndexTemplates() bool {
-	return c.CreateIndexTemplates
 }
 
 // TagKeysAsFields returns tags from the file and command line merged
@@ -420,12 +332,13 @@ func (c *Configuration) TagKeysAsFields() ([]string, error) {
 
 // getConfigOptions wraps the configs to feed to the ElasticSearch client init
 func (c *Configuration) getConfigOptions(logger *zap.Logger) ([]elastic.ClientOptionFunc, error) {
-
-	options := []elastic.ClientOptionFunc{elastic.SetURL(c.Servers...), elastic.SetSniff(c.Sniffer),
+	options := []elastic.ClientOptionFunc{
+		elastic.SetURL(c.Servers...), elastic.SetSniff(c.Sniffer),
 		// Disable health check when token from context is allowed, this is because at this time
 		// we don' have a valid token to do the check ad if we don't disable the check the service that
 		// uses this won't start.
-		elastic.SetHealthcheck(!c.AllowTokenFromContext)}
+		elastic.SetHealthcheck(!c.AllowTokenFromContext),
+	}
 	if c.SnifferTLSEnabled {
 		options = append(options, elastic.SetScheme("https"))
 	}
@@ -433,6 +346,17 @@ func (c *Configuration) getConfigOptions(logger *zap.Logger) ([]elastic.ClientOp
 		Timeout: c.Timeout,
 	}
 	options = append(options, elastic.SetHttpClient(httpClient))
+
+	if c.Password != "" && c.PasswordFilePath != "" {
+		return nil, fmt.Errorf("both Password and PasswordFilePath are set")
+	}
+	if c.PasswordFilePath != "" {
+		passwordFromFile, err := loadTokenFromFile(c.PasswordFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load password from file: %w", err)
+		}
+		c.Password = passwordFromFile
+	}
 	options = append(options, elastic.SetBasicAuth(c.Username, c.Password))
 
 	if c.SendGetBodyAs != "" {
@@ -458,8 +382,25 @@ func addLoggerOptions(options []elastic.ClientOptionFunc, logLevel string) ([]el
 	// e.g. --log-level=info and --es.log-level=debug would mute ES's debug logging and would require --log-level=debug
 	// to show ES debug logs.
 	prodConfig := zap.NewProductionConfig()
-	prodConfig.Level.SetLevel(zap.DebugLevel)
 
+	var lvl zapcore.Level
+	var setLogger func(logger elastic.Logger) elastic.ClientOptionFunc
+
+	switch logLevel {
+	case "debug":
+		lvl = zap.DebugLevel
+		setLogger = elastic.SetTraceLog
+	case "info":
+		lvl = zap.InfoLevel
+		setLogger = elastic.SetInfoLog
+	case "error":
+		lvl = zap.ErrorLevel
+		setLogger = elastic.SetErrorLog
+	default:
+		return options, fmt.Errorf("unrecognized log-level: \"%s\"", logLevel)
+	}
+
+	prodConfig.Level.SetLevel(lvl)
 	esLogger, err := prodConfig.Build()
 	if err != nil {
 		return options, err
@@ -467,17 +408,7 @@ func addLoggerOptions(options []elastic.ClientOptionFunc, logLevel string) ([]el
 
 	// Elastic client requires a "Printf"-able logger.
 	l := zapgrpc.NewLogger(esLogger)
-	switch logLevel {
-	case "debug":
-		l = zapgrpc.NewLogger(esLogger, zapgrpc.WithDebug())
-		options = append(options, elastic.SetTraceLog(l))
-	case "info":
-		options = append(options, elastic.SetInfoLog(l))
-	case "error":
-		options = append(options, elastic.SetErrorLog(l))
-	default:
-		return options, fmt.Errorf("unrecognized log-level: \"%s\"", logLevel)
-	}
+	options = append(options, setLogger(l))
 	return options, nil
 }
 
@@ -489,6 +420,7 @@ func GetHTTPRoundTripper(c *Configuration, logger *zap.Logger) (http.RoundTrippe
 			return nil, err
 		}
 		return &http.Transport{
+			Proxy:           http.ProxyFromEnvironment,
 			TLSClientConfig: ctlsConfig,
 		}, nil
 	}
@@ -512,7 +444,7 @@ func GetHTTPRoundTripper(c *Configuration, logger *zap.Logger) (http.RoundTrippe
 		if c.AllowTokenFromContext {
 			logger.Warn("Token file and token propagation are both enabled, token from file won't be used")
 		}
-		tokenFromFile, err := loadToken(c.TokenFilePath)
+		tokenFromFile, err := loadTokenFromFile(c.TokenFilePath)
 		if err != nil {
 			return nil, err
 		}
@@ -528,7 +460,7 @@ func GetHTTPRoundTripper(c *Configuration, logger *zap.Logger) (http.RoundTrippe
 	return transport, nil
 }
 
-func loadToken(path string) (string, error) {
+func loadTokenFromFile(path string) (string, error) {
 	b, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", err

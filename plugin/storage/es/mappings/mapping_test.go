@@ -17,6 +17,7 @@ package mappings
 import (
 	"embed"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/jaegertracing/jaeger/pkg/es"
 	"github.com/jaegertracing/jaeger/pkg/es/mocks"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 //go:embed fixtures/*.json
@@ -38,36 +40,41 @@ func TestMappingBuilder_GetMapping(t *testing.T) {
 		mapping   string
 		esVersion uint
 	}{
+		{mapping: "jaeger-span", esVersion: 8},
 		{mapping: "jaeger-span", esVersion: 7},
 		{mapping: "jaeger-span", esVersion: 6},
+		{mapping: "jaeger-service", esVersion: 8},
 		{mapping: "jaeger-service", esVersion: 7},
 		{mapping: "jaeger-service", esVersion: 6},
+		{mapping: "jaeger-dependencies", esVersion: 8},
 		{mapping: "jaeger-dependencies", esVersion: 7},
 		{mapping: "jaeger-dependencies", esVersion: 6},
 	}
 	for _, tt := range tests {
 		t.Run(tt.mapping, func(t *testing.T) {
 			mb := &MappingBuilder{
-				TemplateBuilder: es.TextTemplateBuilder{},
-				Shards:          3,
-				Replicas:        3,
-				EsVersion:       tt.esVersion,
-				IndexPrefix:     "test-",
-				UseILM:          true,
-				ILMPolicyName:   "jaeger-test-policy",
+				TemplateBuilder:              es.TextTemplateBuilder{},
+				Shards:                       3,
+				Replicas:                     3,
+				PrioritySpanTemplate:         500,
+				PriorityServiceTemplate:      501,
+				PriorityDependenciesTemplate: 502,
+				EsVersion:                    tt.esVersion,
+				IndexPrefix:                  "test-",
+				UseILM:                       true,
+				ILMPolicyName:                "jaeger-test-policy",
 			}
 			got, err := mb.GetMapping(tt.mapping)
 			require.NoError(t, err)
 			var wantbytes []byte
-			if tt.esVersion == 7 {
-				wantbytes, err = FIXTURES.ReadFile("fixtures/" + tt.mapping + "-7.json")
-				require.NoError(t, err)
-			} else {
-				wantbytes, err = FIXTURES.ReadFile("fixtures/" + tt.mapping + ".json")
-				require.NoError(t, err)
+			fileSuffix := ""
+			if tt.esVersion >= 7 {
+				fileSuffix = fmt.Sprintf("-%d", tt.esVersion)
 			}
+			wantbytes, err = FIXTURES.ReadFile("fixtures/" + tt.mapping + fileSuffix + ".json")
+			require.NoError(t, err)
 			want := string(wantbytes)
-			assert.Equal(t, got, want)
+			assert.Equal(t, want, got)
 		})
 	}
 }
@@ -77,11 +84,14 @@ func TestMappingBuilder_loadMapping(t *testing.T) {
 		name string
 	}{
 		{name: "jaeger-span.json"},
-		{name: "jaeger-service.json"},
 		{name: "jaeger-span-7.json"},
+		{name: "jaeger-span-8.json"},
+		{name: "jaeger-service.json"},
 		{name: "jaeger-service-7.json"},
+		{name: "jaeger-service-8.json"},
 		{name: "jaeger-dependencies.json"},
 		{name: "jaeger-dependencies-7.json"},
+		{name: "jaeger-dependencies-8.json"},
 	}
 	for _, test := range tests {
 		mapping := loadMapping(test.name)
@@ -147,11 +157,10 @@ func TestMappingBuilder_fixMapping(t *testing.T) {
 			}
 			_, err := mappingBuilder.fixMapping("test")
 			if test.err != "" {
-				assert.EqualError(t, err, test.err)
+				require.EqualError(t, err, test.err)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
-
 		})
 	}
 }
@@ -302,9 +311,9 @@ func TestMappingBuilder_GetSpanServiceMappings(t *testing.T) {
 			}
 			_, _, err := mappingBuilder.GetSpanServiceMappings()
 			if test.err != "" {
-				assert.EqualError(t, err, test.err)
+				require.EqualError(t, err, test.err)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -320,5 +329,9 @@ func TestMappingBuilder_GetDependenciesMappings(t *testing.T) {
 		TemplateBuilder: &tb,
 	}
 	_, err := mappingBuilder.GetDependenciesMappings()
-	assert.EqualError(t, err, "template load error")
+	require.EqualError(t, err, "template load error")
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

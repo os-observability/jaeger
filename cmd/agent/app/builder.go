@@ -16,13 +16,13 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/agent/app/configmanager"
@@ -31,6 +31,7 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/agent/app/reporter"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/servers"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/servers/thriftudp"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/ports"
 	agentThrift "github.com/jaegertracing/jaeger/thrift-gen/agent"
 )
@@ -55,12 +56,10 @@ type Model string
 // Protocol used to distinguish the data transfer protocol
 type Protocol string
 
-var (
-	protocolFactoryMap = map[Protocol]thrift.TProtocolFactory{
-		compactProtocol: thrift.NewTCompactProtocolFactoryConf(&thrift.TConfiguration{}),
-		binaryProtocol:  thrift.NewTBinaryProtocolFactoryConf(&thrift.TConfiguration{}),
-	}
-)
+var protocolFactoryMap = map[Protocol]thrift.TProtocolFactory{
+	compactProtocol: thrift.NewTCompactProtocolFactoryConf(&thrift.TConfiguration{}),
+	binaryProtocol:  thrift.NewTBinaryProtocolFactoryConf(&thrift.TConfiguration{}),
+}
 
 // CollectorProxy provides access to Reporter and ClientConfigManager
 type CollectorProxy interface {
@@ -239,10 +238,11 @@ type ProxyBuilderOptions struct {
 }
 
 // CollectorProxyBuilder is a func which builds CollectorProxy.
-type CollectorProxyBuilder func(ProxyBuilderOptions) (CollectorProxy, error)
+type CollectorProxyBuilder func(context.Context, ProxyBuilderOptions) (CollectorProxy, error)
 
 // CreateCollectorProxy creates collector proxy
 func CreateCollectorProxy(
+	ctx context.Context,
 	opts ProxyBuilderOptions,
 	builders map[reporter.Type]CollectorProxyBuilder,
 ) (CollectorProxy, error) {
@@ -250,5 +250,5 @@ func CreateCollectorProxy(
 	if !ok {
 		return nil, fmt.Errorf("unknown reporter type %s", string(opts.ReporterType))
 	}
-	return builder(opts)
+	return builder(ctx, opts)
 }

@@ -22,15 +22,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/atomic"
+	"github.com/stretchr/testify/require"
 
 	lmocks "github.com/jaegertracing/jaeger/pkg/distributedlock/mocks"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
-var (
-	errTestLock = errors.New("lock error")
-)
+var errTestLock = errors.New("lock error")
 
 var _ io.Closer = new(DistributedElectionParticipant)
 
@@ -68,7 +66,6 @@ func TestAcquireLock(t *testing.T) {
 				},
 				lock:         mockLock,
 				resourceName: "sampling_lock",
-				isLeader:     atomic.NewBool(false),
 			}
 
 			p.setLeader(test.isLeader)
@@ -79,7 +76,7 @@ func TestAcquireLock(t *testing.T) {
 	}
 }
 
-func TestRunAcquireLockLoop_followerOnly(t *testing.T) {
+func TestRunAcquireLockLoopFollowerOnly(t *testing.T) {
 	logger, logBuffer := testutils.NewLogger()
 	mockLock := &lmocks.Lock{}
 	mockLock.On("Acquire", "sampling_lock", time.Duration(5*time.Millisecond)).Return(false, errTestLock)
@@ -92,7 +89,7 @@ func TestRunAcquireLockLoop_followerOnly(t *testing.T) {
 	)
 
 	defer func() {
-		assert.NoError(t, p.Close())
+		require.NoError(t, p.Close())
 	}()
 	go p.Start()
 
@@ -107,4 +104,8 @@ func TestRunAcquireLockLoop_followerOnly(t *testing.T) {
 	match, errMsg := testutils.LogMatcher(2, expectedErrorMsg, logBuffer.Lines())
 	assert.True(t, match, errMsg)
 	assert.False(t, p.IsLeader())
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/thrift-gen/zipkincore"
 )
 
@@ -27,6 +28,10 @@ var (
 	negativeDuration = int64(-1)
 	positiveDuration = int64(1)
 )
+
+func TestNewStandardSanitizers(t *testing.T) {
+	NewStandardSanitizers()
+}
 
 func TestChainedSanitizer(t *testing.T) {
 	sanitizer := NewChainedSanitizer(NewSpanDurationSanitizer())
@@ -49,7 +54,7 @@ func TestSpanDurationSanitizer(t *testing.T) {
 	span = &zipkincore.Span{Duration: &positiveDuration}
 	actual = sanitizer.Sanitize(span)
 	assert.Equal(t, positiveDuration, *actual.Duration)
-	assert.Len(t, actual.BinaryAnnotations, 0)
+	assert.Empty(t, actual.BinaryAnnotations)
 
 	sanitizer = NewSpanDurationSanitizer()
 	nilDurationSpan := &zipkincore.Span{}
@@ -105,7 +110,7 @@ func TestSpanParentIDSanitizer(t *testing.T) {
 				assert.Equal(t, zeroParentIDTag, string(actual.BinaryAnnotations[0].Key))
 			}
 		} else {
-			assert.Len(t, actual.BinaryAnnotations, 0)
+			assert.Empty(t, actual.BinaryAnnotations)
 		}
 	}
 }
@@ -120,16 +125,20 @@ func TestSpanErrorSanitizer(t *testing.T) {
 		addErrMsgAnno bool
 	}{
 		// value is string
-		{&zipkincore.BinaryAnnotation{Key: "error", AnnotationType: zipkincore.AnnotationType_STRING},
+		{
+			&zipkincore.BinaryAnnotation{Key: "error", AnnotationType: zipkincore.AnnotationType_STRING},
 			true, true, false,
 		},
-		{&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("true"), AnnotationType: zipkincore.AnnotationType_STRING},
+		{
+			&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("true"), AnnotationType: zipkincore.AnnotationType_STRING},
 			true, true, false,
 		},
-		{&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("message"), AnnotationType: zipkincore.AnnotationType_STRING},
+		{
+			&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("message"), AnnotationType: zipkincore.AnnotationType_STRING},
 			true, true, true,
 		},
-		{&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("false"), AnnotationType: zipkincore.AnnotationType_STRING},
+		{
+			&zipkincore.BinaryAnnotation{Key: "error", Value: []byte("false"), AnnotationType: zipkincore.AnnotationType_STRING},
 			true, false, false,
 		},
 	}
@@ -141,7 +150,7 @@ func TestSpanErrorSanitizer(t *testing.T) {
 
 		sanitized := sanitizer.Sanitize(span)
 		if test.isErrorTag {
-			var expectedVal = []byte{0}
+			expectedVal := []byte{0}
 			if test.isError {
 				expectedVal = []byte{1}
 			}
@@ -150,12 +159,12 @@ func TestSpanErrorSanitizer(t *testing.T) {
 			assert.Equal(t, zipkincore.AnnotationType_BOOL, sanitized.BinaryAnnotations[0].AnnotationType)
 
 			if test.addErrMsgAnno {
-				assert.Equal(t, 2, len(sanitized.BinaryAnnotations))
+				assert.Len(t, sanitized.BinaryAnnotations, 2)
 				assert.Equal(t, "error.message", sanitized.BinaryAnnotations[1].Key)
 				assert.Equal(t, "message", string(sanitized.BinaryAnnotations[1].Value))
 				assert.Equal(t, zipkincore.AnnotationType_STRING, sanitized.BinaryAnnotations[1].AnnotationType)
 			} else {
-				assert.Equal(t, 1, len(sanitized.BinaryAnnotations))
+				assert.Len(t, sanitized.BinaryAnnotations, 1)
 			}
 		}
 	}
@@ -191,4 +200,8 @@ func TestSpanStartTimeSanitizer(t *testing.T) {
 	}
 	sanitized = sanitizer.Sanitize(span)
 	assert.Equal(t, int64(20), *sanitized.Timestamp)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

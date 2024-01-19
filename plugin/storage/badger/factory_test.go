@@ -22,12 +22,13 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/config"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
 func TestInitializationErrors(t *testing.T) {
@@ -46,7 +47,7 @@ func TestInitializationErrors(t *testing.T) {
 	f.InitFromViper(v, zap.NewNop())
 
 	err := f.Initialize(metrics.NullFactory, zap.NewNop())
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestForCodecov(t *testing.T) {
@@ -56,25 +57,29 @@ func TestForCodecov(t *testing.T) {
 	f.InitFromViper(v, zap.NewNop())
 
 	err := f.Initialize(metrics.NullFactory, zap.NewNop())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Get all the writers, readers, etc
 	_, err = f.CreateSpanReader()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	_, err = f.CreateSpanWriter()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	_, err = f.CreateDependencyReader()
-	assert.NoError(t, err)
+	require.NoError(t, err)
+
+	lock, err := f.CreateLock()
+	require.NoError(t, err)
+	assert.NotNil(t, lock)
 
 	// Now, remove the badger directories
 	err = os.RemoveAll(f.tmpDir)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Now try to close, since the files have been deleted this should throw an error
 	err = f.Close()
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestMaintenanceRun(t *testing.T) {
@@ -118,7 +123,7 @@ func TestMaintenanceRun(t *testing.T) {
 	assert.True(t, gs[lastValueLogCleanedName] > 0)
 
 	err := io.Closer(f).Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // TestMaintenanceCodecov this test is not intended to test anything, but hopefully increase coverage by triggering a log line
@@ -143,7 +148,7 @@ func TestMaintenanceCodecov(t *testing.T) {
 	}
 
 	err := f.store.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	waiter() // This should trigger the logging of error
 }
 
@@ -186,7 +191,7 @@ func TestBadgerMetrics(t *testing.T) {
 	assert.True(t, found)
 
 	err := f.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestInitFromOptions(t *testing.T) {

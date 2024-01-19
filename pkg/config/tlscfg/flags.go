@@ -16,6 +16,9 @@ package tlscfg
 
 import (
 	"flag"
+	"fmt"
+	"reflect"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -29,6 +32,10 @@ const (
 	tlsServerName     = tlsPrefix + ".server-name"
 	tlsClientCA       = tlsPrefix + ".client-ca"
 	tlsSkipHostVerify = tlsPrefix + ".skip-host-verify"
+	tlsCipherSuites   = tlsPrefix + ".cipher-suites"
+	tlsMinVersion     = tlsPrefix + ".min-version"
+	tlsMaxVersion     = tlsPrefix + ".max-version"
+	tlsReloadInterval = tlsPrefix + ".reload-interval"
 )
 
 // ClientFlagsConfig describes which CLI flags for TLS client should be generated.
@@ -38,7 +45,8 @@ type ClientFlagsConfig struct {
 
 // ServerFlagsConfig describes which CLI flags for TLS server should be generated.
 type ServerFlagsConfig struct {
-	Prefix string
+	Prefix                   string
+	EnableCertReloadInterval bool
 }
 
 // AddFlags adds flags for TLS to the FlagSet.
@@ -57,10 +65,16 @@ func (c ServerFlagsConfig) AddFlags(flags *flag.FlagSet) {
 	flags.String(c.Prefix+tlsCert, "", "Path to a TLS Certificate file, used to identify this server to clients")
 	flags.String(c.Prefix+tlsKey, "", "Path to a TLS Private Key file, used to identify this server to clients")
 	flags.String(c.Prefix+tlsClientCA, "", "Path to a TLS CA (Certification Authority) file used to verify certificates presented by clients (if unset, all clients are permitted)")
+	flags.String(c.Prefix+tlsCipherSuites, "", "Comma-separated list of cipher suites for the server, values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).")
+	flags.String(c.Prefix+tlsMinVersion, "", "Minimum TLS version supported (Possible values: 1.0, 1.1, 1.2, 1.3)")
+	flags.String(c.Prefix+tlsMaxVersion, "", "Maximum TLS version supported (Possible values: 1.0, 1.1, 1.2, 1.3)")
+	if c.EnableCertReloadInterval {
+		flags.Duration(c.Prefix+tlsReloadInterval, 0, "The duration after which the certificate will be reloaded (0s means will not be reloaded)")
+	}
 }
 
 // InitFromViper creates tls.Config populated with values retrieved from Viper.
-func (c ClientFlagsConfig) InitFromViper(v *viper.Viper) Options {
+func (c ClientFlagsConfig) InitFromViper(v *viper.Viper) (Options, error) {
 	var p Options
 	p.Enabled = v.GetBool(c.Prefix + tlsEnabled)
 	p.CAPath = v.GetString(c.Prefix + tlsCA)
@@ -68,15 +82,42 @@ func (c ClientFlagsConfig) InitFromViper(v *viper.Viper) Options {
 	p.KeyPath = v.GetString(c.Prefix + tlsKey)
 	p.ServerName = v.GetString(c.Prefix + tlsServerName)
 	p.SkipHostVerify = v.GetBool(c.Prefix + tlsSkipHostVerify)
-	return p
+
+	if !p.Enabled {
+		var empty Options
+		if !reflect.DeepEqual(&p, &empty) {
+			return p, fmt.Errorf("%s.tls.* options cannot be used when %s is false", c.Prefix, c.Prefix+tlsEnabled)
+		}
+	}
+
+	return p, nil
 }
 
 // InitFromViper creates tls.Config populated with values retrieved from Viper.
-func (c ServerFlagsConfig) InitFromViper(v *viper.Viper) Options {
+func (c ServerFlagsConfig) InitFromViper(v *viper.Viper) (Options, error) {
 	var p Options
 	p.Enabled = v.GetBool(c.Prefix + tlsEnabled)
 	p.CertPath = v.GetString(c.Prefix + tlsCert)
 	p.KeyPath = v.GetString(c.Prefix + tlsKey)
 	p.ClientCAPath = v.GetString(c.Prefix + tlsClientCA)
-	return p
+	if s := v.GetString(c.Prefix + tlsCipherSuites); s != "" {
+		p.CipherSuites = strings.Split(stripWhiteSpace(v.GetString(c.Prefix+tlsCipherSuites)), ",")
+	}
+	p.MinVersion = v.GetString(c.Prefix + tlsMinVersion)
+	p.MaxVersion = v.GetString(c.Prefix + tlsMaxVersion)
+	p.ReloadInterval = v.GetDuration(c.Prefix + tlsReloadInterval)
+
+	if !p.Enabled {
+		var empty Options
+		if !reflect.DeepEqual(&p, &empty) {
+			return p, fmt.Errorf("%s.tls.* options cannot be used when %s is false", c.Prefix, c.Prefix+tlsEnabled)
+		}
+	}
+
+	return p, nil
+}
+
+// stripWhiteSpace removes all whitespace characters from a string
+func stripWhiteSpace(str string) string {
+	return strings.ReplaceAll(str, " ", "")
 }

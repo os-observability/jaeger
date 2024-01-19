@@ -19,6 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestOptionsWithDefaultFlags(t *testing.T) {
@@ -28,10 +30,10 @@ func TestOptionsWithDefaultFlags(t *testing.T) {
 
 	assert.Equal(t, "localhost:16686", o.QueryGRPCHostPort)
 	assert.Equal(t, "/tmp", o.OutputDir)
-	assert.Equal(t, false, o.HashStandardTags)
-	assert.Equal(t, false, o.HashCustomTags)
-	assert.Equal(t, false, o.HashLogs)
-	assert.Equal(t, false, o.HashProcess)
+	assert.False(t, o.HashStandardTags)
+	assert.False(t, o.HashCustomTags)
+	assert.False(t, o.HashLogs)
+	assert.False(t, o.HashProcess)
 	assert.Equal(t, -1, o.MaxSpansCount)
 }
 
@@ -54,9 +56,13 @@ func TestOptionsWithFlags(t *testing.T) {
 	assert.Equal(t, "192.168.1.10:16686", o.QueryGRPCHostPort)
 	assert.Equal(t, "/data", o.OutputDir)
 	assert.Equal(t, "6ef2debb698f2f7c", o.TraceID)
-	assert.Equal(t, true, o.HashStandardTags)
-	assert.Equal(t, true, o.HashCustomTags)
-	assert.Equal(t, true, o.HashLogs)
-	assert.Equal(t, true, o.HashProcess)
+	assert.True(t, o.HashStandardTags)
+	assert.True(t, o.HashCustomTags)
+	assert.True(t, o.HashLogs)
+	assert.True(t, o.HashProcess)
 	assert.Equal(t, 100, o.MaxSpansCount)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

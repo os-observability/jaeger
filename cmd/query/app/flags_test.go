@@ -17,10 +17,12 @@ package app
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/pkg/config"
@@ -33,6 +35,7 @@ func TestQueryBuilderFlags(t *testing.T) {
 	v, command := config.Viperize(AddFlags)
 	command.ParseFlags([]string{
 		"--query.static-files=/dev/null",
+		"--query.log-static-assets-access=true",
 		"--query.ui-config=some.json",
 		"--query.base-path=/jaeger",
 		"--query.http-server.host-port=127.0.0.1:8080",
@@ -41,8 +44,10 @@ func TestQueryBuilderFlags(t *testing.T) {
 		"--query.additional-headers=whatever:thing",
 		"--query.max-clock-skew-adjustment=10s",
 	})
-	qOpts := new(QueryOptions).InitFromViper(v, zap.NewNop())
-	assert.Equal(t, "/dev/null", qOpts.StaticAssets)
+	qOpts, err := new(QueryOptions).InitFromViper(v, zap.NewNop())
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/null", qOpts.StaticAssets.Path)
+	assert.True(t, qOpts.StaticAssets.LogAccess)
 	assert.Equal(t, "some.json", qOpts.UIConfig)
 	assert.Equal(t, "/jaeger", qOpts.BasePath)
 	assert.Equal(t, "127.0.0.1:8080", qOpts.HTTPHostPort)
@@ -59,7 +64,8 @@ func TestQueryBuilderBadHeadersFlags(t *testing.T) {
 	command.ParseFlags([]string{
 		"--query.additional-headers=malformedheader",
 	})
-	qOpts := new(QueryOptions).InitFromViper(v, zap.NewNop())
+	qOpts, err := new(QueryOptions).InitFromViper(v, zap.NewNop())
+	require.NoError(t, err)
 	assert.Nil(t, qOpts.AdditionalHeaders)
 }
 
@@ -74,25 +80,26 @@ func TestStringSliceAsHeader(t *testing.T) {
 
 	assert.Equal(t, []string{"https://mozilla.org"}, parsedHeaders["Access-Control-Allow-Origin"])
 	assert.Equal(t, []string{"X-My-Custom-Header", "X-Another-Custom-Header"}, parsedHeaders["Access-Control-Expose-Headers"])
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	malformedHeaders := append(headers, "this is not a valid header")
 	parsedHeaders, err = stringSliceAsHeader(malformedHeaders)
 	assert.Nil(t, parsedHeaders)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	parsedHeaders, err = stringSliceAsHeader([]string{})
 	assert.Nil(t, parsedHeaders)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	parsedHeaders, err = stringSliceAsHeader(nil)
 	assert.Nil(t, parsedHeaders)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestBuildQueryServiceOptions(t *testing.T) {
 	v, _ := config.Viperize(AddFlags)
-	qOpts := new(QueryOptions).InitFromViper(v, zap.NewNop())
+	qOpts, err := new(QueryOptions).InitFromViper(v, zap.NewNop())
+	require.NoError(t, err)
 	assert.NotNil(t, qOpts)
 
 	qSvcOpts := qOpts.BuildQueryServiceOptions(&mocks.Factory{}, zap.NewNop())
@@ -120,7 +127,7 @@ func TestBuildQueryServiceOptions(t *testing.T) {
 }
 
 func TestQueryOptionsPortAllocationFromFlags(t *testing.T) {
-	var flagPortCases = []struct {
+	flagPortCases := []struct {
 		name                 string
 		flagsArray           []string
 		expectedHTTPHostPort string
@@ -162,11 +169,28 @@ func TestQueryOptionsPortAllocationFromFlags(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			v, command := config.Viperize(AddFlags)
 			command.ParseFlags(test.flagsArray)
-			qOpts := new(QueryOptions).InitFromViper(v, zap.NewNop())
+			qOpts, err := new(QueryOptions).InitFromViper(v, zap.NewNop())
+			require.NoError(t, err)
 
 			assert.Equal(t, test.expectedHTTPHostPort, qOpts.HTTPHostPort)
 			assert.Equal(t, test.expectedGRPCHostPort, qOpts.GRPCHostPort)
+		})
+	}
+}
 
+func TestQueryOptions_FailedTLSFlags(t *testing.T) {
+	for _, test := range []string{"gRPC", "HTTP"} {
+		t.Run(test, func(t *testing.T) {
+			proto := strings.ToLower(test)
+			v, command := config.Viperize(AddFlags)
+			err := command.ParseFlags([]string{
+				"--query." + proto + ".tls.enabled=false",
+				"--query." + proto + ".tls.cert=blah", // invalid unless tls.enabled
+			})
+			require.NoError(t, err)
+			_, err = new(QueryOptions).InitFromViper(v, zap.NewNop())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "failed to process "+test+" TLS options")
 		})
 	}
 }

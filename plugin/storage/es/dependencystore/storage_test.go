@@ -26,9 +26,11 @@ import (
 	"github.com/olivere/elastic"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger/pkg/es"
 	"github.com/jaegertracing/jaeger/pkg/es/mocks"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
@@ -50,13 +52,21 @@ func withDepStorage(indexPrefix, indexDateLayout string, maxDocCount int, fn fun
 		client:    client,
 		logger:    logger,
 		logBuffer: logBuffer,
-		storage:   NewDependencyStore(client, logger, indexPrefix, indexDateLayout, maxDocCount),
+		storage: NewDependencyStore(DependencyStoreParams{
+			Client:          func() es.Client { return client },
+			Logger:          logger,
+			IndexPrefix:     indexPrefix,
+			IndexDateLayout: indexDateLayout,
+			MaxDocCount:     maxDocCount,
+		}),
 	}
 	fn(r)
 }
 
-var _ dependencystore.Reader = &DependencyStore{} // check API conformance
-var _ dependencystore.Writer = &DependencyStore{} // check API conformance
+var (
+	_ dependencystore.Reader = &DependencyStore{} // check API conformance
+	_ dependencystore.Writer = &DependencyStore{} // check API conformance
+)
 
 func TestNewSpanReaderIndexPrefix(t *testing.T) {
 	testCases := []struct {
@@ -69,8 +79,15 @@ func TestNewSpanReaderIndexPrefix(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		client := &mocks.Client{}
-		r := NewDependencyStore(client, zap.NewNop(), testCase.prefix, "2006-01-02", defaultMaxDocCount)
-		assert.Equal(t, testCase.expected+dependencyIndex, r.indexPrefix)
+		r := NewDependencyStore(DependencyStoreParams{
+			Client:          func() es.Client { return client },
+			Logger:          zap.NewNop(),
+			IndexPrefix:     testCase.prefix,
+			IndexDateLayout: "2006-01-02",
+			MaxDocCount:     defaultMaxDocCount,
+		})
+
+		assert.Equal(t, testCase.expected+dependencyIndex, r.dependencyIndexPrefix)
 	}
 }
 
@@ -104,18 +121,16 @@ func TestWriteDependencies(t *testing.T) {
 			writeService.On("Add", mock.Anything).Return(nil, testCase.writeError)
 			err := r.storage.WriteDependencies(fixedTime, []model.DependencyLink{})
 			if testCase.expectedError != "" {
-				assert.EqualError(t, err, testCase.expectedError)
+				require.EqualError(t, err, testCase.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
-
 	}
 }
 
 func TestGetDependencies(t *testing.T) {
-	goodDependencies :=
-		`{
+	goodDependencies := `{
 			"ts": 798434479000000,
 			"dependencies": [
 				{ "parent": "hello",
@@ -180,10 +195,10 @@ func TestGetDependencies(t *testing.T) {
 
 			actual, err := r.storage.GetDependencies(context.Background(), fixedTime, 24*time.Hour)
 			if testCase.expectedError != "" {
-				assert.EqualError(t, err, testCase.expectedError)
+				require.EqualError(t, err, testCase.expectedError)
 				assert.Nil(t, actual)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.EqualValues(t, testCase.expectedOutput, actual)
 			}
 		})
@@ -200,36 +215,76 @@ func createSearchResult(dependencyLink string) *elastic.SearchResult {
 	return searchResult
 }
 
-func TestGetIndices(t *testing.T) {
+func TestGetReadIndices(t *testing.T) {
 	fixedTime := time.Date(1995, time.April, 21, 4, 12, 19, 95, time.UTC)
 	testCases := []struct {
-		expected []string
+		indices  []string
 		lookback time.Duration
-		prefix   string
+		params   DependencyStoreParams
 	}{
 		{
-			expected: []string{indexWithDate("", "2006-01-02", fixedTime), indexWithDate("", "2006-01-02", fixedTime.Add(-24*time.Hour))},
+			params:   DependencyStoreParams{IndexPrefix: "", IndexDateLayout: "2006-01-02", UseReadWriteAliases: true},
 			lookback: 23 * time.Hour,
-			prefix:   "",
+			indices: []string{
+				dependencyIndex + "read",
+			},
 		},
 		{
-			expected: []string{indexWithDate("", "2006-01-02", fixedTime), indexWithDate("", "2006-01-02", fixedTime.Add(-24*time.Hour))},
+			params:   DependencyStoreParams{IndexPrefix: "", IndexDateLayout: "2006-01-02"},
+			lookback: 23 * time.Hour,
+			indices: []string{
+				dependencyIndex + fixedTime.Format("2006-01-02"),
+				dependencyIndex + fixedTime.Add(-23*time.Hour).Format("2006-01-02"),
+			},
+		},
+		{
+			params:   DependencyStoreParams{IndexPrefix: "", IndexDateLayout: "2006-01-02"},
 			lookback: 13 * time.Hour,
-			prefix:   "",
+			indices: []string{
+				dependencyIndex + fixedTime.UTC().Format("2006-01-02"),
+				dependencyIndex + fixedTime.Add(-13*time.Hour).Format("2006-01-02"),
+			},
 		},
 		{
-			expected: []string{indexWithDate("foo:", "2006-01-02", fixedTime)},
+			params:   DependencyStoreParams{IndexPrefix: "foo:", IndexDateLayout: "2006-01-02"},
 			lookback: 1 * time.Hour,
-			prefix:   "foo:",
+			indices: []string{
+				"foo:" + indexPrefixSeparator + dependencyIndex + fixedTime.Format("2006-01-02"),
+			},
 		},
 		{
-			expected: []string{indexWithDate("foo-", "2006-01-02", fixedTime)},
+			params:   DependencyStoreParams{IndexPrefix: "foo-", IndexDateLayout: "2006-01-02"},
 			lookback: 0,
-			prefix:   "foo-",
+			indices: []string{
+				"foo-" + indexPrefixSeparator + dependencyIndex + fixedTime.Format("2006-01-02"),
+			},
 		},
 	}
 	for _, testCase := range testCases {
-		assert.EqualValues(t, testCase.expected, getIndices(testCase.prefix, "2006-01-02", fixedTime, testCase.lookback))
+		s := NewDependencyStore(testCase.params)
+		assert.EqualValues(t, testCase.indices, s.getReadIndices(fixedTime, testCase.lookback))
+	}
+}
+
+func TestGetWriteIndex(t *testing.T) {
+	fixedTime := time.Date(1995, time.April, 21, 4, 12, 19, 95, time.UTC)
+	testCases := []struct {
+		writeIndex string
+		lookback   time.Duration
+		params     DependencyStoreParams
+	}{
+		{
+			params:     DependencyStoreParams{IndexPrefix: "", IndexDateLayout: "2006-01-02", UseReadWriteAliases: true},
+			writeIndex: dependencyIndex + "write",
+		},
+		{
+			params:     DependencyStoreParams{IndexPrefix: "", IndexDateLayout: "2006-01-02", UseReadWriteAliases: false},
+			writeIndex: dependencyIndex + fixedTime.Format("2006-01-02"),
+		},
+	}
+	for _, testCase := range testCases {
+		s := NewDependencyStore(testCase.params)
+		assert.EqualValues(t, testCase.writeIndex, s.getWriteIndex(fixedTime))
 	}
 }
 
@@ -239,4 +294,8 @@ func stringMatcher(q string) interface{} {
 		return strings.Contains(s, q)
 	}
 	return mock.MatchedBy(matchFunc)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -17,9 +17,9 @@ package server
 import (
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -29,6 +29,7 @@ import (
 	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/healthcheck"
 	"github.com/jaegertracing/jaeger/pkg/httpmetrics"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/pkg/recoveryhandler"
 )
 
@@ -41,6 +42,13 @@ type HTTPServerParams struct {
 	MetricsFactory metrics.Factory
 	HealthCheck    *healthcheck.HealthCheck
 	Logger         *zap.Logger
+
+	// ReadTimeout sets the respective parameter of http.Server
+	ReadTimeout time.Duration
+	// ReadHeaderTimeout sets the respective parameter of http.Server
+	ReadHeaderTimeout time.Duration
+	// IdleTimeout sets the respective parameter of http.Server
+	IdleTimeout time.Duration
 }
 
 // StartHTTPServer based on the given parameters
@@ -49,8 +57,11 @@ func StartHTTPServer(params *HTTPServerParams) (*http.Server, error) {
 
 	errorLog, _ := zap.NewStdLogAt(params.Logger, zapcore.ErrorLevel)
 	server := &http.Server{
-		Addr:     params.HostPort,
-		ErrorLog: errorLog,
+		Addr:              params.HostPort,
+		ReadTimeout:       params.ReadTimeout,
+		ReadHeaderTimeout: params.ReadHeaderTimeout,
+		IdleTimeout:       params.IdleTimeout,
+		ErrorLog:          errorLog,
 	}
 	if params.TLSConfig.Enabled {
 		tlsCfg, err := params.TLSConfig.Config(params.Logger) // This checks if the certificates are correctly provided
@@ -87,7 +98,7 @@ func serveHTTP(server *http.Server, listener net.Listener, params *HTTPServerPar
 	cfgHandler.RegisterRoutes(r)
 
 	recoveryHandler := recoveryhandler.NewRecoveryHandler(params.Logger, true)
-	server.Handler = httpmetrics.Wrap(recoveryHandler(r), params.MetricsFactory)
+	server.Handler = httpmetrics.Wrap(recoveryHandler(r), params.MetricsFactory, params.Logger)
 	go func() {
 		var err error
 		if params.TLSConfig.Enabled {

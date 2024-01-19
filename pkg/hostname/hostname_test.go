@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestAsIdentifier(t *testing.T) {
@@ -47,4 +49,8 @@ func TestAsIdentifier(t *testing.T) {
 	actualHostname, _ := os.Hostname()
 	assert.Equal(t, hostname1, hostname2)
 	assert.True(t, strings.HasPrefix(hostname1, actualHostname))
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

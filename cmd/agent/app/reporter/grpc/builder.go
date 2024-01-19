@@ -21,11 +21,11 @@ import (
 	"strings"
 
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 
@@ -33,6 +33,8 @@ import (
 	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/discovery"
 	"github.com/jaegertracing/jaeger/pkg/discovery/grpcresolver"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/netutils"
 )
 
 // ConnBuilder Struct to hold configurations
@@ -46,6 +48,8 @@ type ConnBuilder struct {
 	DiscoveryMinPeers int
 	Notifier          discovery.Notifier
 	Discoverer        discovery.Discoverer
+
+	AdditionalDialOptions []grpc.DialOption
 }
 
 // NewConnBuilder creates a new grpc connection builder.
@@ -54,7 +58,7 @@ func NewConnBuilder() *ConnBuilder {
 }
 
 // CreateConnection creates the gRPC connection
-func (b *ConnBuilder) CreateConnection(logger *zap.Logger, mFactory metrics.Factory) (*grpc.ClientConn, error) {
+func (b *ConnBuilder) CreateConnection(ctx context.Context, logger *zap.Logger, mFactory metrics.Factory) (*grpc.ClientConn, error) {
 	var dialOptions []grpc.DialOption
 	var dialTarget string
 	if b.TLS.Enabled { // user requested a secure connection
@@ -68,7 +72,7 @@ func (b *ConnBuilder) CreateConnection(logger *zap.Logger, mFactory metrics.Fact
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(creds))
 	} else { // insecure connection
 		logger.Info("Agent requested insecure grpc connection to collector(s)")
-		dialOptions = append(dialOptions, grpc.WithInsecure())
+		dialOptions = append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
 	if b.Notifier != nil && b.Discoverer != nil {
@@ -79,6 +83,7 @@ func (b *ConnBuilder) CreateConnection(logger *zap.Logger, mFactory metrics.Fact
 		if b.CollectorHostPorts == nil {
 			return nil, errors.New("at least one collector hostPort address is required when resolver is not available")
 		}
+		b.CollectorHostPorts = netutils.FixLocalhost(b.CollectorHostPorts)
 		if len(b.CollectorHostPorts) > 1 {
 			r := manual.NewBuilderWithScheme("jaeger-manual")
 			dialOptions = append(dialOptions, grpc.WithResolvers(r))
@@ -95,8 +100,9 @@ func (b *ConnBuilder) CreateConnection(logger *zap.Logger, mFactory metrics.Fact
 	}
 	dialOptions = append(dialOptions, grpc.WithDefaultServiceConfig(grpcresolver.GRPCServiceConfig))
 	dialOptions = append(dialOptions, grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(grpc_retry.WithMax(b.MaxRetry))))
-	conn, err := grpc.Dial(dialTarget, dialOptions...)
+	dialOptions = append(dialOptions, b.AdditionalDialOptions...)
 
+	conn, err := grpc.Dial(dialTarget, dialOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,16 +115,22 @@ func (b *ConnBuilder) CreateConnection(logger *zap.Logger, mFactory metrics.Fact
 		logger.Info("Checking connection to collector")
 
 		for {
-			s := cc.GetState()
-			if s == connectivity.Ready {
-				cm.OnConnectionStatusChange(true)
-				cm.RecordTarget(cc.Target())
-			} else {
-				cm.OnConnectionStatusChange(false)
-			}
+			select {
+			case <-ctx.Done():
+				logger.Info("Stopping connection")
+				return
+			default:
+				s := cc.GetState()
+				if s == connectivity.Ready {
+					cm.OnConnectionStatusChange(true)
+					cm.RecordTarget(cc.Target())
+				} else {
+					cm.OnConnectionStatusChange(false)
+				}
 
-			logger.Info("Agent collector connection state change", zap.String("dialTarget", dialTarget), zap.Stringer("status", s))
-			cc.WaitForStateChange(context.Background(), s)
+				logger.Info("Agent collector connection state change", zap.String("dialTarget", dialTarget), zap.Stringer("status", s))
+				cc.WaitForStateChange(ctx, s)
+			}
 		}
 	}(conn, connectMetrics)
 

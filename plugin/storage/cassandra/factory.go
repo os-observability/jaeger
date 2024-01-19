@@ -21,13 +21,16 @@ import (
 	"io"
 
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/pkg/cassandra"
 	"github.com/jaegertracing/jaeger/pkg/cassandra/config"
 	"github.com/jaegertracing/jaeger/pkg/distributedlock"
 	"github.com/jaegertracing/jaeger/pkg/hostname"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/plugin"
 	cLock "github.com/jaegertracing/jaeger/plugin/pkg/distributedlock/cassandra"
 	cDepStore "github.com/jaegertracing/jaeger/plugin/storage/cassandra/dependencystore"
 	cSamplingStore "github.com/jaegertracing/jaeger/plugin/storage/cassandra/samplingstore"
@@ -44,6 +47,14 @@ const (
 	archiveStorageConfig = "cassandra-archive"
 )
 
+var ( // interface comformance checks
+	_ storage.Factory              = (*Factory)(nil)
+	_ storage.ArchiveFactory       = (*Factory)(nil)
+	_ storage.SamplingStoreFactory = (*Factory)(nil)
+	_ io.Closer                    = (*Factory)(nil)
+	_ plugin.Configurable          = (*Factory)(nil)
+)
+
 // Factory implements storage.Factory for Cassandra backend.
 type Factory struct {
 	Options *Options
@@ -51,6 +62,7 @@ type Factory struct {
 	primaryMetricsFactory metrics.Factory
 	archiveMetricsFactory metrics.Factory
 	logger                *zap.Logger
+	tracer                trace.TracerProvider
 
 	primaryConfig  config.SessionBuilder
 	primarySession cassandra.Session
@@ -61,6 +73,7 @@ type Factory struct {
 // NewFactory creates a new Factory.
 func NewFactory() *Factory {
 	return &Factory{
+		tracer:  otel.GetTracerProvider(),
 		Options: NewOptions(primaryStorageConfig, archiveStorageConfig),
 	}
 }
@@ -114,7 +127,7 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 
 // CreateSpanReader implements storage.Factory
 func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
-	return cSpanStore.NewSpanReader(f.primarySession, f.primaryMetricsFactory, f.logger), nil
+	return cSpanStore.NewSpanReader(f.primarySession, f.primaryMetricsFactory, f.logger, f.tracer.Tracer("cSpanStore.SpanReader")), nil
 }
 
 // CreateSpanWriter implements storage.Factory
@@ -137,7 +150,7 @@ func (f *Factory) CreateArchiveSpanReader() (spanstore.Reader, error) {
 	if f.archiveSession == nil {
 		return nil, storage.ErrArchiveStorageNotConfigured
 	}
-	return cSpanStore.NewSpanReader(f.archiveSession, f.archiveMetricsFactory, f.logger), nil
+	return cSpanStore.NewSpanReader(f.archiveSession, f.archiveMetricsFactory, f.logger, f.tracer.Tracer("cSpanStore.SpanReader")), nil
 }
 
 // CreateArchiveSpanWriter implements storage.ArchiveFactory
@@ -206,4 +219,9 @@ func (f *Factory) Close() error {
 		cfg.TLS.Close()
 	}
 	return f.Options.GetPrimary().TLS.Close()
+}
+
+// PrimarySession is used from integration tests to clean database between tests
+func (f *Factory) PrimarySession() cassandra.Session {
+	return f.primarySession
 }

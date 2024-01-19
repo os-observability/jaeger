@@ -47,7 +47,7 @@ type AuthenticationConfig struct {
 	PlainText      PlainTextConfig `mapstructure:"plaintext"`
 }
 
-//SetConfiguration set configure authentication into sarama config structure
+// SetConfiguration set configure authentication into sarama config structure
 func (config *AuthenticationConfig) SetConfiguration(saramaConfig *sarama.Config, logger *zap.Logger) error {
 	authentication := strings.ToLower(config.Authentication)
 	if strings.Trim(authentication, " ") == "" {
@@ -68,18 +68,14 @@ func (config *AuthenticationConfig) SetConfiguration(saramaConfig *sarama.Config
 		setKerberosConfiguration(&config.Kerberos, saramaConfig)
 		return nil
 	case plaintext:
-		err := setPlainTextConfiguration(&config.PlainText, saramaConfig)
-		if err != nil {
-			return err
-		}
-		return nil
+		return setPlainTextConfiguration(&config.PlainText, saramaConfig)
 	default:
 		return fmt.Errorf("Unknown/Unsupported authentication method %s to kafka cluster", config.Authentication)
 	}
 }
 
 // InitFromViper loads authentication configuration from viper flags.
-func (config *AuthenticationConfig) InitFromViper(configPrefix string, v *viper.Viper) {
+func (config *AuthenticationConfig) InitFromViper(configPrefix string, v *viper.Viper) error {
 	config.Authentication = v.GetString(configPrefix + suffixAuthentication)
 	config.Kerberos.ServiceName = v.GetString(configPrefix + kerberosPrefix + suffixKerberosServiceName)
 	config.Kerberos.Realm = v.GetString(configPrefix + kerberosPrefix + suffixKerberosRealm)
@@ -88,12 +84,17 @@ func (config *AuthenticationConfig) InitFromViper(configPrefix string, v *viper.
 	config.Kerberos.Password = v.GetString(configPrefix + kerberosPrefix + suffixKerberosPassword)
 	config.Kerberos.ConfigPath = v.GetString(configPrefix + kerberosPrefix + suffixKerberosConfig)
 	config.Kerberos.KeyTabPath = v.GetString(configPrefix + kerberosPrefix + suffixKerberosKeyTab)
+	config.Kerberos.DisablePAFXFast = v.GetBool(configPrefix + kerberosPrefix + suffixKerberosDisablePAFXFAST)
 
-	var tlsClientConfig = tlscfg.ClientFlagsConfig{
+	tlsClientConfig := tlscfg.ClientFlagsConfig{
 		Prefix: configPrefix,
 	}
 
-	config.TLS = tlsClientConfig.InitFromViper(v)
+	var err error
+	config.TLS, err = tlsClientConfig.InitFromViper(v)
+	if err != nil {
+		return fmt.Errorf("failed to process Kafka TLS options: %w", err)
+	}
 	if config.Authentication == tls {
 		config.TLS.Enabled = true
 	}
@@ -101,4 +102,5 @@ func (config *AuthenticationConfig) InitFromViper(configPrefix string, v *viper.
 	config.PlainText.Username = v.GetString(configPrefix + plainTextPrefix + suffixPlainTextUsername)
 	config.PlainText.Password = v.GetString(configPrefix + plainTextPrefix + suffixPlainTextPassword)
 	config.PlainText.Mechanism = v.GetString(configPrefix + plainTextPrefix + suffixPlainTextMechanism)
+	return nil
 }

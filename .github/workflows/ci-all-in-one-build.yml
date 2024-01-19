@@ -7,11 +7,34 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event.pull_request && github.event.pull_request.number) || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+# See https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions
+permissions:
+  contents: read
+
 jobs:
   all-in-one:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mode:
+        - name: v1
+          binary: all-in-one
+          skip_sampling: false
+        - name: v2
+          binary: jaeger
+          skip_sampling: true
+
     steps:
-    - uses: actions/checkout@v2.4.0
+    - name: Harden Runner
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: true
 
@@ -19,24 +42,37 @@ jobs:
       run: |
         git fetch --prune --unshallow --tags
 
-    - uses: actions/setup-go@v2
+    - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
       with:
-        go-version: ^1.17
+        go-version: 1.21.x
 
-    - uses: actions/setup-node@v2.5.0
-      with:
-        node-version: '10'
+    - name: Setup Node.js version
+      uses: ./.github/actions/setup-node.js
 
     - name: Export BRANCH variable
       uses: ./.github/actions/setup-branch
 
     - name: Install tools
       run: make install-ci
-    
-    - uses: docker/setup-qemu-action@v1
+
+    - uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+
+    - name: Define PR_ONLY var if running on a Pull Request
+      run: |
+        case ${GITHUB_EVENT_NAME} in
+          pull_request)
+            echo "PR_ONLY=pr-only" >> ${GITHUB_ENV}
+            ;;
+          *)
+            echo "PR_ONLY=" >> ${GITHUB_ENV}
+            ;;
+        esac
 
     - name: Build, test, and publish all-in-one image
-      run: bash scripts/build-all-in-one-image.sh
+      run: |
+        BINARY=${{ matrix.mode.binary }} \
+          SKIP_SAMPLING=${{ matrix.mode.skip_sampling }} \
+          bash scripts/build-all-in-one-image.sh ${{ env.PR_ONLY }}
       env:
         DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}

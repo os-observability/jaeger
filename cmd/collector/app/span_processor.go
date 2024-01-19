@@ -18,15 +18,16 @@ package app
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sanitizer"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/queue"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
 
@@ -53,17 +54,18 @@ type spanProcessor struct {
 	collectorTags      map[string]string
 	dynQueueSizeWarmup uint
 	dynQueueSizeMemory uint
-	bytesProcessed     *atomic.Uint64
-	spansProcessed     *atomic.Uint64
+	bytesProcessed     atomic.Uint64
+	spansProcessed     atomic.Uint64
 	stopCh             chan struct{}
 }
 
 type queueItem struct {
 	queuedTime time.Time
 	span       *model.Span
+	tenant     string
 }
 
-// NewSpanProcessor returns a SpanProcessor that preProcesses, filters, queues, sanitizes, and processes spans
+// NewSpanProcessor returns a SpanProcessor that preProcesses, filters, queues, sanitizes, and processes spans.
 func NewSpanProcessor(
 	spanWriter spanstore.Writer,
 	additional []ProcessSpan,
@@ -93,8 +95,16 @@ func newSpanProcessor(spanWriter spanstore.Writer, additional []ProcessSpan, opt
 		options.extraFormatTypes)
 	droppedItemHandler := func(item interface{}) {
 		handlerMetrics.SpansDropped.Inc(1)
+		if options.onDroppedSpan != nil {
+			options.onDroppedSpan(item.(*queueItem).span)
+		}
 	}
 	boundedQueue := queue.NewBoundedQueue(options.queueSize, droppedItemHandler)
+
+	sanitizers := sanitizer.NewStandardSanitizers()
+	if options.sanitizer != nil {
+		sanitizers = append(sanitizers, options.sanitizer)
+	}
 
 	sp := spanProcessor{
 		queue:              boundedQueue,
@@ -102,7 +112,7 @@ func newSpanProcessor(spanWriter spanstore.Writer, additional []ProcessSpan, opt
 		logger:             options.logger,
 		preProcessSpans:    options.preProcessSpans,
 		filterSpan:         options.spanFilter,
-		sanitizer:          options.sanitizer,
+		sanitizer:          sanitizer.NewChainedSanitizer(sanitizers...),
 		reportBusy:         options.reportBusy,
 		numWorkers:         options.numWorkers,
 		spanWriter:         spanWriter,
@@ -110,16 +120,16 @@ func newSpanProcessor(spanWriter spanstore.Writer, additional []ProcessSpan, opt
 		stopCh:             make(chan struct{}),
 		dynQueueSizeMemory: options.dynQueueSizeMemory,
 		dynQueueSizeWarmup: options.dynQueueSizeWarmup,
-		bytesProcessed:     atomic.NewUint64(0),
-		spansProcessed:     atomic.NewUint64(0),
 	}
 
 	processSpanFuncs := []ProcessSpan{options.preSave, sp.saveSpan}
 	if options.dynQueueSizeMemory > 0 {
-		// add to processSpanFuncs
 		options.logger.Info("Dynamically adjusting the queue size at runtime.",
 			zap.Uint("memory-mib", options.dynQueueSizeMemory/1024/1024),
 			zap.Uint("queue-size-warmup", options.dynQueueSizeWarmup))
+	}
+	if options.dynQueueSizeMemory > 0 || options.spanSizeMetricsEnabled {
+		// add to processSpanFuncs
 		processSpanFuncs = append(processSpanFuncs, sp.countSpan)
 	}
 
@@ -136,7 +146,7 @@ func (sp *spanProcessor) Close() error {
 	return nil
 }
 
-func (sp *spanProcessor) saveSpan(span *model.Span) {
+func (sp *spanProcessor) saveSpan(span *model.Span, tenant string) {
 	if nil == span.Process {
 		sp.logger.Error("process is empty for the span")
 		sp.metrics.SavedErrBySvc.ReportServiceNameForSpan(span)
@@ -144,8 +154,11 @@ func (sp *spanProcessor) saveSpan(span *model.Span) {
 	}
 
 	startTime := time.Now()
-	// TODO context should be propagated from upstream components
-	if err := sp.spanWriter.WriteSpan(context.TODO(), span); err != nil {
+	// Since we save spans asynchronously from receiving them, we cannot reuse
+	// the inbound Context, as it may be cancelled by the time we reach this point,
+	// so we need to start a new Context.
+	ctx := tenancy.WithTenant(context.Background(), tenant)
+	if err := sp.spanWriter.WriteSpan(ctx, span); err != nil {
 		sp.logger.Error("Failed to save span", zap.Error(err))
 		sp.metrics.SavedErrBySvc.ReportServiceNameForSpan(span)
 	} else {
@@ -156,17 +169,27 @@ func (sp *spanProcessor) saveSpan(span *model.Span) {
 	sp.metrics.SaveLatency.Record(time.Since(startTime))
 }
 
-func (sp *spanProcessor) countSpan(span *model.Span) {
+func (sp *spanProcessor) countSpan(span *model.Span, tenant string) {
 	sp.bytesProcessed.Add(uint64(span.Size()))
-	sp.spansProcessed.Inc()
+	sp.spansProcessed.Add(1)
 }
 
 func (sp *spanProcessor) ProcessSpans(mSpans []*model.Span, options processor.SpansOptions) ([]bool, error) {
-	sp.preProcessSpans(mSpans)
+	sp.preProcessSpans(mSpans, options.Tenant)
 	sp.metrics.BatchSize.Update(int64(len(mSpans)))
 	retMe := make([]bool, len(mSpans))
+
+	// Note: this is not the ideal place to do this because collector tags are added to Process.Tags,
+	// and Process can be shared between different spans in the batch, but we no longer know that,
+	// the relation is lost upstream and it's impossible in Go to dedupe pointers. But at least here
+	// we have a single thread updating all spans that may share the same Process, before concurrency
+	// kicks in.
+	for _, span := range mSpans {
+		sp.addCollectorTags(span)
+	}
+
 	for i, mSpan := range mSpans {
-		ok := sp.enqueueSpan(mSpan, options.SpanFormat, options.InboundTransport)
+		ok := sp.enqueueSpan(mSpan, options.SpanFormat, options.InboundTransport, options.Tenant)
 		if !ok && sp.reportBusy {
 			return nil, processor.ErrBusy
 		}
@@ -176,7 +199,7 @@ func (sp *spanProcessor) ProcessSpans(mSpans []*model.Span, options processor.Sp
 }
 
 func (sp *spanProcessor) processItemFromQueue(item *queueItem) {
-	sp.processSpan(sp.sanitizer(item.span))
+	sp.processSpan(sp.sanitizer(item.span), item.tenant)
 	sp.metrics.InQueueLatency.Record(time.Since(item.queuedTime))
 }
 
@@ -201,7 +224,9 @@ func (sp *spanProcessor) addCollectorTags(span *model.Span) {
 	typedTags.Sort()
 }
 
-func (sp *spanProcessor) enqueueSpan(span *model.Span, originalFormat processor.SpanFormat, transport processor.InboundTransport) bool {
+// Note: spans may share the Process object, so no changes should be made to Process
+// in this function as it may cause race conditions.
+func (sp *spanProcessor) enqueueSpan(span *model.Span, originalFormat processor.SpanFormat, transport processor.InboundTransport, tenant string) bool {
 	spanCounts := sp.metrics.GetCountsForFormat(originalFormat, transport)
 	spanCounts.ReceivedBySvc.ReportServiceNameForSpan(span)
 
@@ -210,15 +235,13 @@ func (sp *spanProcessor) enqueueSpan(span *model.Span, originalFormat processor.
 		return true // as in "not dropped", because it's actively rejected
 	}
 
-	//add format tag
+	// add format tag
 	span.Tags = append(span.Tags, model.String("internal.span.format", string(originalFormat)))
-
-	// append the collector tags
-	sp.addCollectorTags(span)
 
 	item := &queueItem{
 		queuedTime: time.Now(),
 		span:       span,
+		tenant:     tenant,
 	}
 	return sp.queue.Produce(item)
 }

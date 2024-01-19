@@ -1,10 +1,12 @@
 # Hot R.O.D. - Rides on Demand
 
 This is a demo application that consists of several microservices and illustrates
-the use of the OpenTracing API. It can be run standalone, but requires Jaeger backend
+the use of the OpenTelemetry API & SDK. It can be run standalone, but requires Jaeger backend
 to view the traces. A tutorial / walkthrough is available:
-  * as a blog post [Take OpenTracing for a HotROD ride][hotrod-tutorial],
+  * as a blog post [Take Jaeger for a HotROD ride][hotrod-tutorial],
   * as a video [OpenShift Commons Briefing: Distributed Tracing with Jaeger & Prometheus on Kubernetes][hotrod-openshift].
+
+As of Jaeger v1.42.0 this application was upgraded to use the OpenTelemetry SDK for traces.
 
 ## Features
 
@@ -15,18 +17,34 @@ to view the traces. A tutorial / walkthrough is available:
 * Use baggage propagation to
   * Diagnose inter-request contention (queueing)
   * Attribute time spent in a service
-* Use open source libraries with OpenTracing integration to get vendor-neutral instrumentation for free
+* Use [opentelemetry-go-contrib](https://github.com/open-telemetry/opentelemetry-go-contrib) open source libraries to instrument HTTP and gRPC requests with minimal code changes
 
 ## Running
 
 ### Run everything via `docker-compose`
 
 * Download `docker-compose.yml` from https://github.com/jaegertracing/jaeger/blob/main/examples/hotrod/docker-compose.yml
-* Run Jaeger backend and HotROD demo with `docker-compose -f path-to-yml-file up`
+* Optional: find the latest Jaeger version (see https://www.jaegertracing.io/download/) and pass it via environment variable `JAEGER_VERSION`. Otherwise `docker compose` will use the `latest` tag, which is fine for the first time you download the images, but once they are in your local registry the `latest` tag is never updated and you may be running stale (and possibly incompatible) verions of Jaeger and the HotROD app.
+* Run Jaeger backend and HotROD demo, e.g.:
+  * `JAEGER_VERSION=1.52 docker-compose -f path-to-yml-file up`
 * Access Jaeger UI at http://localhost:16686 and HotROD app at http://localhost:8080
 * Shutdown / cleanup with `docker-compose -f path-to-yml-file down`
 
 Alternatively, you can run each component separately as described below.
+
+### Run everything in Kubernetes
+
+```bash
+kustomize build ./kubernetes | kubectl apply -f -
+kubectl port-forward -n example-hotrod service/example-hotrod 8080:frontend
+# In another terminal
+kubectl port-forward -n example-hotrod service/jaeger 16686:frontend
+
+# To cleanup
+kustomize build ./kubernetes | kubectl delete -f -
+```
+
+Access Jaeger UI at http://localhost:16686 and HotROD app at http://localhost:8080
 
 ### Run Jaeger backend
 
@@ -38,6 +56,7 @@ docker run \
   --name jaeger \
   -p6831:6831/udp \
   -p16686:16686 \
+  -p14268:14268 \
   jaegertracing/all-in-one:latest
 ```
 
@@ -56,8 +75,7 @@ go run ./examples/hotrod/main.go all
 docker run \
   --rm \
   --link jaeger \
-  --env JAEGER_AGENT_HOST=jaeger \
-  --env JAEGER_AGENT_PORT=6831 \
+  --env OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces \
   -p8080-8083:8080-8083 \
   jaegertracing/example-hotrod:latest \
   all
@@ -71,9 +89,6 @@ The app exposes metrics in either Go's `expvar` format (by default) or in Promet
   * `expvar`: `curl http://127.0.0.1:8083/debug/vars`
   * Prometheus: `curl http://127.0.0.1:8083/metrics`
 
-[hotrod-tutorial]: https://medium.com/@YuriShkuro/take-opentracing-for-a-hotrod-ride-f6e3141f7941
-[hotrod-openshift]: https://blog.openshift.com/openshift-commons-briefing-82-distributed-tracing-with-jaeger-prometheus-on-kubernetes/
-
 ## Linking to traces
 
 The HotROD UI can generate links to the Jaeger UI to find traces corresponding
@@ -84,3 +99,6 @@ it can be customized via `-j <address>` flag passed to HotROD, e.g.
 ```
 go run ./examples/hotrod/main.go all -j http://jaeger-ui:16686
 ```
+
+[hotrod-tutorial]: https://medium.com/jaegertracing/take-jaeger-for-a-hotrod-ride-233cf43e46c2
+[hotrod-openshift]: https://blog.openshift.com/openshift-commons-briefing-82-distributed-tracing-with-jaeger-prometheus-on-kubernetes/

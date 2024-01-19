@@ -21,17 +21,31 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics/fork"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
+	"github.com/jaegertracing/jaeger/internal/metrics/fork"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/healthcheck"
-	"github.com/jaegertracing/jaeger/thrift-gen/sampling"
+	"github.com/jaegertracing/jaeger/pkg/tenancy"
+	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 )
 
 var _ (io.Closer) = (*Collector)(nil)
+
+func optionsForEphemeralPorts() *flags.CollectorOptions {
+	collectorOpts := &flags.CollectorOptions{}
+	collectorOpts.GRPC.HostPort = ":0"
+	collectorOpts.HTTP.HostPort = ":0"
+	collectorOpts.OTLP.Enabled = true
+	collectorOpts.OTLP.GRPC.HostPort = ":0"
+	collectorOpts.OTLP.HTTP.HostPort = ":0"
+	collectorOpts.Zipkin.HTTPHostPort = ":0"
+	return collectorOpts
+}
 
 func TestNewCollector(t *testing.T) {
 	// prepare
@@ -40,6 +54,7 @@ func TestNewCollector(t *testing.T) {
 	baseMetrics := metricstest.NewFactory(time.Hour)
 	spanWriter := &fakeSpanWriter{}
 	strategyStore := &mockStrategyStore{}
+	tm := &tenancy.Manager{}
 
 	c := New(&CollectorParams{
 		ServiceName:    "collector",
@@ -48,21 +63,67 @@ func TestNewCollector(t *testing.T) {
 		SpanWriter:     spanWriter,
 		StrategyStore:  strategyStore,
 		HealthCheck:    hc,
+		TenancyMgr:     tm,
 	})
-	collectorOpts := &CollectorOptions{}
 
-	// test
-	c.Start(collectorOpts)
-
-	// verify
-	assert.NoError(t, c.Close())
+	collectorOpts := optionsForEphemeralPorts()
+	require.NoError(t, c.Start(collectorOpts))
+	assert.NotNil(t, c.SpanHandlers())
+	require.NoError(t, c.Close())
 }
 
-type mockStrategyStore struct {
+func TestCollector_StartErrors(t *testing.T) {
+	run := func(name string, options *flags.CollectorOptions, expErr string) {
+		t.Run(name, func(t *testing.T) {
+			hc := healthcheck.New()
+			logger := zap.NewNop()
+			baseMetrics := metricstest.NewFactory(time.Hour)
+			spanWriter := &fakeSpanWriter{}
+			strategyStore := &mockStrategyStore{}
+			tm := &tenancy.Manager{}
+
+			c := New(&CollectorParams{
+				ServiceName:    "collector",
+				Logger:         logger,
+				MetricsFactory: baseMetrics,
+				SpanWriter:     spanWriter,
+				StrategyStore:  strategyStore,
+				HealthCheck:    hc,
+				TenancyMgr:     tm,
+			})
+			err := c.Start(options)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), expErr)
+		})
+	}
+
+	var options *flags.CollectorOptions
+
+	options = optionsForEphemeralPorts()
+	options.GRPC.HostPort = ":-1"
+	run("gRPC", options, "could not start gRPC server")
+
+	options = optionsForEphemeralPorts()
+	options.HTTP.HostPort = ":-1"
+	run("HTTP", options, "could not start HTTP server")
+
+	options = optionsForEphemeralPorts()
+	options.Zipkin.HTTPHostPort = ":-1"
+	run("Zipkin", options, "could not start Zipkin receiver")
+
+	options = optionsForEphemeralPorts()
+	options.OTLP.GRPC.HostPort = ":-1"
+	run("OTLP/GRPC", options, "could not start OTLP receiver")
+
+	options = optionsForEphemeralPorts()
+	options.OTLP.HTTP.HostPort = ":-1"
+	run("OTLP/HTTP", options, "could not start OTLP receiver")
 }
 
-func (m *mockStrategyStore) GetSamplingStrategy(_ context.Context, serviceName string) (*sampling.SamplingStrategyResponse, error) {
-	return &sampling.SamplingStrategyResponse{}, nil
+type mockStrategyStore struct{}
+
+func (m *mockStrategyStore) GetSamplingStrategy(_ context.Context, serviceName string) (*api_v2.SamplingStrategyResponse, error) {
+	return &api_v2.SamplingStrategyResponse{}, nil
 }
 
 func TestCollector_PublishOpts(t *testing.T) {
@@ -74,6 +135,7 @@ func TestCollector_PublishOpts(t *testing.T) {
 	metricsFactory := fork.New("internal", forkFactory, baseMetrics)
 	spanWriter := &fakeSpanWriter{}
 	strategyStore := &mockStrategyStore{}
+	tm := &tenancy.Manager{}
 
 	c := New(&CollectorParams{
 		ServiceName:    "collector",
@@ -82,13 +144,13 @@ func TestCollector_PublishOpts(t *testing.T) {
 		SpanWriter:     spanWriter,
 		StrategyStore:  strategyStore,
 		HealthCheck:    hc,
+		TenancyMgr:     tm,
 	})
-	collectorOpts := &CollectorOptions{
-		NumWorkers: 24,
-		QueueSize:  42,
-	}
+	collectorOpts := optionsForEphemeralPorts()
+	collectorOpts.NumWorkers = 24
+	collectorOpts.QueueSize = 42
 
-	c.Start(collectorOpts)
+	require.NoError(t, c.Start(collectorOpts))
 	defer c.Close()
 
 	forkFactory.AssertGaugeMetrics(t, metricstest.ExpectedMetric{
@@ -109,6 +171,7 @@ func TestAggregator(t *testing.T) {
 	spanWriter := &fakeSpanWriter{}
 	strategyStore := &mockStrategyStore{}
 	agg := &mockAggregator{}
+	tm := &tenancy.Manager{}
 
 	c := New(&CollectorParams{
 		ServiceName:    "collector",
@@ -118,17 +181,15 @@ func TestAggregator(t *testing.T) {
 		StrategyStore:  strategyStore,
 		HealthCheck:    hc,
 		Aggregator:     agg,
+		TenancyMgr:     tm,
 	})
-	collectorOpts := &CollectorOptions{
-		QueueSize:  10,
-		NumWorkers: 10,
-	}
-
-	// test
-	c.Start(collectorOpts)
+	collectorOpts := optionsForEphemeralPorts()
+	collectorOpts.NumWorkers = 10
+	collectorOpts.QueueSize = 10
+	require.NoError(t, c.Start(collectorOpts))
 
 	// assert that aggregator was added to the collector
-	_, err := c.spanProcessor.ProcessSpans([]*model.Span{
+	spans := []*model.Span{
 		{
 			OperationName: "y",
 			Process: &model.Process{
@@ -145,15 +206,18 @@ func TestAggregator(t *testing.T) {
 				},
 			},
 		},
-	}, processor.SpansOptions{SpanFormat: processor.JaegerSpanFormat})
-	assert.NoError(t, err)
+	}
+	_, err := c.spanProcessor.ProcessSpans(spans, processor.SpansOptions{SpanFormat: processor.JaegerSpanFormat})
+	require.NoError(t, err)
+	require.NoError(t, c.Close())
 
-	// verify
-	assert.NoError(t, c.Close())
-
-	// assert that aggregator was used
-	assert.Equal(t, 1, agg.callCount)
-
-	// assert that aggregator close was called
-	assert.Equal(t, 1, agg.closeCount)
+	// spans are processed by background workers, so we may need to wait
+	for i := 0; i < 1000; i++ {
+		if agg.callCount.Load() == 1 && agg.closeCount.Load() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assert.EqualValues(t, 1, agg.callCount.Load(), "aggregator was used")
+	assert.EqualValues(t, 1, agg.closeCount.Load(), "aggregator close was called")
 }

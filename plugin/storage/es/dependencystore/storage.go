@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/olivere/elastic"
@@ -32,44 +31,60 @@ import (
 )
 
 const (
-	dependencyType  = "dependencies"
-	dependencyIndex = "jaeger-dependencies-"
+	dependencyType       = "dependencies"
+	dependencyIndex      = "jaeger-dependencies-"
+	indexPrefixSeparator = "-"
 )
 
 // DependencyStore handles all queries and insertions to ElasticSearch dependencies
 type DependencyStore struct {
-	client          es.Client
-	logger          *zap.Logger
-	indexPrefix     string
-	indexDateLayout string
-	maxDocCount     int
+	client                func() es.Client
+	logger                *zap.Logger
+	dependencyIndexPrefix string
+	indexDateLayout       string
+	maxDocCount           int
+	useReadWriteAliases   bool
+}
+
+// DependencyStoreParams holds constructor parameters for NewDependencyStore
+type DependencyStoreParams struct {
+	Client              func() es.Client
+	Logger              *zap.Logger
+	IndexPrefix         string
+	IndexDateLayout     string
+	MaxDocCount         int
+	UseReadWriteAliases bool
 }
 
 // NewDependencyStore returns a DependencyStore
-func NewDependencyStore(client es.Client, logger *zap.Logger, indexPrefix, indexDateLayout string, maxDocCount int) *DependencyStore {
-	var prefix string
-	if indexPrefix != "" && !strings.HasSuffix(indexPrefix, "-") {
-		prefix = indexPrefix + "-"
-	}
+func NewDependencyStore(p DependencyStoreParams) *DependencyStore {
 	return &DependencyStore{
-		client:          client,
-		logger:          logger,
-		indexPrefix:     prefix + dependencyIndex,
-		indexDateLayout: indexDateLayout,
-		maxDocCount:     maxDocCount,
+		client:                p.Client,
+		logger:                p.Logger,
+		dependencyIndexPrefix: prefixIndexName(p.IndexPrefix, dependencyIndex),
+		indexDateLayout:       p.IndexDateLayout,
+		maxDocCount:           p.MaxDocCount,
+		useReadWriteAliases:   p.UseReadWriteAliases,
 	}
+}
+
+func prefixIndexName(prefix, index string) string {
+	if prefix != "" {
+		return prefix + indexPrefixSeparator + index
+	}
+	return index
 }
 
 // WriteDependencies implements dependencystore.Writer#WriteDependencies.
 func (s *DependencyStore) WriteDependencies(ts time.Time, dependencies []model.DependencyLink) error {
-	indexName := indexWithDate(s.indexPrefix, s.indexDateLayout, ts)
-	s.writeDependencies(indexName, ts, dependencies)
+	writeIndexName := s.getWriteIndex(ts)
+	s.writeDependencies(writeIndexName, ts, dependencies)
 	return nil
 }
 
 // CreateTemplates creates index templates.
 func (s *DependencyStore) CreateTemplates(dependenciesTemplate string) error {
-	_, err := s.client.CreateTemplate("jaeger-dependencies").Body(dependenciesTemplate).Do(context.Background())
+	_, err := s.client().CreateTemplate("jaeger-dependencies").Body(dependenciesTemplate).Do(context.Background())
 	if err != nil {
 		return err
 	}
@@ -77,16 +92,17 @@ func (s *DependencyStore) CreateTemplates(dependenciesTemplate string) error {
 }
 
 func (s *DependencyStore) writeDependencies(indexName string, ts time.Time, dependencies []model.DependencyLink) {
-	s.client.Index().Index(indexName).Type(dependencyType).
-		BodyJson(&dbmodel.TimeDependencies{Timestamp: ts,
+	s.client().Index().Index(indexName).Type(dependencyType).
+		BodyJson(&dbmodel.TimeDependencies{
+			Timestamp:    ts,
 			Dependencies: dbmodel.FromDomainDependencies(dependencies),
 		}).Add()
 }
 
 // GetDependencies returns all interservice dependencies
 func (s *DependencyStore) GetDependencies(ctx context.Context, endTs time.Time, lookback time.Duration) ([]model.DependencyLink, error) {
-	indices := getIndices(s.indexPrefix, s.indexDateLayout, endTs, lookback)
-	searchResult, err := s.client.Search(indices...).
+	indices := s.getReadIndices(endTs, lookback)
+	searchResult, err := s.client().Search(indices...).
 		Size(s.maxDocCount).
 		Query(buildTSQuery(endTs, lookback)).
 		IgnoreUnavailable(true).
@@ -112,18 +128,28 @@ func buildTSQuery(endTs time.Time, lookback time.Duration) elastic.Query {
 	return elastic.NewRangeQuery("timestamp").Gte(endTs.Add(-lookback)).Lte(endTs)
 }
 
-func getIndices(prefix, dateLayout string, ts time.Time, lookback time.Duration) []string {
+func (s *DependencyStore) getReadIndices(ts time.Time, lookback time.Duration) []string {
+	if s.useReadWriteAliases {
+		return []string{s.dependencyIndexPrefix + "read"}
+	}
 	var indices []string
-	firstIndex := indexWithDate(prefix, dateLayout, ts.Add(-lookback))
-	currentIndex := indexWithDate(prefix, dateLayout, ts)
+	firstIndex := indexWithDate(s.dependencyIndexPrefix, s.indexDateLayout, ts.Add(-lookback))
+	currentIndex := indexWithDate(s.dependencyIndexPrefix, s.indexDateLayout, ts)
 	for currentIndex != firstIndex {
 		indices = append(indices, currentIndex)
 		ts = ts.Add(-24 * time.Hour)
-		currentIndex = indexWithDate(prefix, dateLayout, ts)
+		currentIndex = indexWithDate(s.dependencyIndexPrefix, s.indexDateLayout, ts)
 	}
 	return append(indices, firstIndex)
 }
 
 func indexWithDate(indexNamePrefix, indexDateLayout string, date time.Time) string {
 	return indexNamePrefix + date.UTC().Format(indexDateLayout)
+}
+
+func (s *DependencyStore) getWriteIndex(ts time.Time) string {
+	if s.useReadWriteAliases {
+		return s.dependencyIndexPrefix + "write"
+	}
+	return indexWithDate(s.dependencyIndexPrefix, s.indexDateLayout, ts)
 }

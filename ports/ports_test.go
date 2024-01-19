@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestPortToHostPort(t *testing.T) {
@@ -50,4 +52,8 @@ func TestFormatHostPort(t *testing.T) {
 	assert.Equal(t, ":831", FormatHostPort(":831"))
 	assert.Equal(t, "", FormatHostPort(""))
 	assert.Equal(t, "localhost:42", FormatHostPort("localhost:42"))
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

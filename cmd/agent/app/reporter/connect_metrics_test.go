@@ -20,11 +20,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 )
 
 func TestConnectMetrics(t *testing.T) {
 	mf := metricstest.NewFactory(time.Hour)
+	defer mf.Stop()
 	cm := NewConnectMetrics(mf)
 
 	getGauge := func() map[string]int64 {

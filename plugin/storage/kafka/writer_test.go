@@ -22,11 +22,11 @@ import (
 
 	"github.com/Shopify/sarama"
 	saramaMocks "github.com/Shopify/sarama/mocks"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/kafka/mocks"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
@@ -77,6 +77,7 @@ var _ spanstore.Writer = &SpanWriter{}
 
 func withSpanWriter(t *testing.T, fn func(span *model.Span, w *spanWriterTest)) {
 	serviceMetrics := metricstest.NewFactory(100 * time.Millisecond)
+	defer serviceMetrics.Stop()
 	saramaConfig := sarama.NewConfig()
 	saramaConfig.Producer.Return.Successes = true
 	producer := saramaMocks.NewAsyncProducer(t, saramaConfig)
@@ -95,11 +96,10 @@ func withSpanWriter(t *testing.T, fn func(span *model.Span, w *spanWriterTest)) 
 
 func TestKafkaWriter(t *testing.T) {
 	withSpanWriter(t, func(span *model.Span, w *spanWriterTest) {
-
 		w.producer.ExpectInputAndSucceed()
 
 		err := w.writer.WriteSpan(context.Background(), span)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		for i := 0; i < 100; i++ {
 			time.Sleep(time.Microsecond)
@@ -128,10 +128,9 @@ func TestKafkaWriter(t *testing.T) {
 
 func TestKafkaWriterErr(t *testing.T) {
 	withSpanWriter(t, func(span *model.Span, w *spanWriterTest) {
-
 		w.producer.ExpectInputAndFail(sarama.ErrRequestTimedOut)
 		err := w.writer.WriteSpan(context.Background(), span)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		for i := 0; i < 100; i++ {
 			time.Sleep(time.Microsecond)
@@ -160,13 +159,12 @@ func TestKafkaWriterErr(t *testing.T) {
 
 func TestMarshallerErr(t *testing.T) {
 	withSpanWriter(t, func(span *model.Span, w *spanWriterTest) {
-
 		marshaller := &mocks.Marshaller{}
 		marshaller.On("Marshal", mock.AnythingOfType("*model.Span")).Return([]byte{}, errors.New(""))
 		w.writer.marshaller = marshaller
 
 		err := w.writer.WriteSpan(context.Background(), span)
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		w.writer.Close()
 

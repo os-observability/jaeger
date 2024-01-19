@@ -55,7 +55,7 @@ func TestToDomain(t *testing.T) {
 					t.Log(err)
 				}
 				out, err := json.Marshal(actualSpans)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				t.Logf("Actual trace %v: %s", i, string(out))
 			}
 		})
@@ -102,7 +102,7 @@ func TestUnknownJaegerType(t *testing.T) {
 		Key:   "sneh",
 	})
 	expected := model.String("sneh", "Unknown VType: Tag({Key:sneh VType:<UNSET> VStr:<nil> VDouble:<nil> VBool:<nil> VLong:<nil> VBinary:[]})")
-	assert.Equal(t, mkv, expected)
+	assert.Equal(t, expected, mkv)
 }
 
 func TestToDomain_ToDomainProcess(t *testing.T) {

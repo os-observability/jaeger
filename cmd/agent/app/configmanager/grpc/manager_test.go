@@ -23,9 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
-	"github.com/jaegertracing/jaeger/thrift-gen/sampling"
 )
 
 func close(t *testing.T, c io.Closer) {
@@ -36,36 +37,35 @@ func TestSamplingManager_GetSamplingStrategy(t *testing.T) {
 	s, addr := initializeGRPCTestServer(t, func(s *grpc.Server) {
 		api_v2.RegisterSamplingManagerServer(s, &mockSamplingHandler{})
 	})
-	conn, err := grpc.Dial(addr.String(), grpc.WithInsecure())
+	conn, err := grpc.Dial(addr.String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	defer close(t, conn)
 	require.NoError(t, err)
 	defer s.GracefulStop()
 	manager := NewConfigManager(conn)
 	resp, err := manager.GetSamplingStrategy(context.Background(), "any")
 	require.NoError(t, err)
-	assert.Equal(t, &sampling.SamplingStrategyResponse{StrategyType: sampling.SamplingStrategyType_PROBABILISTIC}, resp)
+	assert.Equal(t, &api_v2.SamplingStrategyResponse{StrategyType: api_v2.SamplingStrategyType_PROBABILISTIC}, resp)
 }
 
 func TestSamplingManager_GetSamplingStrategy_error(t *testing.T) {
-	conn, err := grpc.Dial("foo", grpc.WithInsecure())
+	conn, err := grpc.Dial("foo", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	defer close(t, conn)
 	require.NoError(t, err)
 	manager := NewConfigManager(conn)
 	resp, err := manager.GetSamplingStrategy(context.Background(), "any")
 	require.Nil(t, resp)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Error while dialing dial tcp: address foo: missing port in address")
+	assert.Contains(t, err.Error(), "Error while dialing: dial tcp: address foo: missing port in address")
 }
 
 func TestSamplingManager_GetBaggageRestrictions(t *testing.T) {
 	manager := NewConfigManager(nil)
 	rest, err := manager.GetBaggageRestrictions(context.Background(), "foo")
 	require.Nil(t, rest)
-	assert.EqualError(t, err, "baggage not implemented")
+	require.EqualError(t, err, "baggage not implemented")
 }
 
-type mockSamplingHandler struct {
-}
+type mockSamplingHandler struct{}
 
 func (*mockSamplingHandler) GetSamplingStrategy(context.Context, *api_v2.SamplingStrategyParameters) (*api_v2.SamplingStrategyResponse, error) {
 	return &api_v2.SamplingStrategyResponse{StrategyType: api_v2.SamplingStrategyType_PROBABILISTIC}, nil
@@ -81,4 +81,8 @@ func initializeGRPCTestServer(t *testing.T, beforeServe func(server *grpc.Server
 		require.NoError(t, err)
 	}()
 	return server, lis.Addr()
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

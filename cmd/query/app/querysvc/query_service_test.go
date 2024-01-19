@@ -22,11 +22,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/model/adjuster"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	depsmocks "github.com/jaegertracing/jaeger/storage/dependencystore/mocks"
@@ -122,7 +124,7 @@ func TestGetTraceSuccess(t *testing.T) {
 	type contextKey string
 	ctx := context.Background()
 	res, err := tqs.queryService.GetTrace(context.WithValue(ctx, contextKey("foo"), "bar"), mockTraceID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, res, mockTrace)
 }
 
@@ -149,7 +151,7 @@ func TestGetTraceFromArchiveStorage(t *testing.T) {
 	type contextKey string
 	ctx := context.Background()
 	res, err := tqs.queryService.GetTrace(context.WithValue(ctx, contextKey("foo"), "bar"), mockTraceID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, res, mockTrace)
 }
 
@@ -162,7 +164,7 @@ func TestGetServices(t *testing.T) {
 	type contextKey string
 	ctx := context.Background()
 	actualServices, err := tqs.queryService.GetServices(context.WithValue(ctx, contextKey("foo"), "bar"))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, expectedServices, actualServices)
 }
 
@@ -180,7 +182,7 @@ func TestGetOperations(t *testing.T) {
 	type contextKey string
 	ctx := context.Background()
 	actualOperations, err := tqs.queryService.GetOperations(context.WithValue(ctx, contextKey("foo"), "bar"), operationQuery)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, expectedOperations, actualOperations)
 }
 
@@ -201,7 +203,7 @@ func TestFindTraces(t *testing.T) {
 		NumTraces:     200,
 	}
 	traces, err := tqs.queryService.FindTraces(context.WithValue(ctx, contextKey("foo"), "bar"), params)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, traces, 1)
 }
 
@@ -239,10 +241,9 @@ func TestArchiveTraceWithArchiveWriterError(t *testing.T) {
 
 	type contextKey string
 	ctx := context.Background()
-	multiErr := tqs.queryService.ArchiveTrace(context.WithValue(ctx, contextKey("foo"), "bar"), mockTraceID)
-	assert.Len(t, multiErr, 2)
+	joinErr := tqs.queryService.ArchiveTrace(context.WithValue(ctx, contextKey("foo"), "bar"), mockTraceID)
 	// There are two spans in the mockTrace, ArchiveTrace should return a wrapped error.
-	assert.EqualError(t, multiErr, "[cannot save, cannot save]")
+	require.EqualError(t, joinErr, "cannot save\ncannot save")
 }
 
 // Test QueryService.ArchiveTrace() with correctly configured ArchiveSpanWriter.
@@ -256,7 +257,7 @@ func TestArchiveTraceSuccess(t *testing.T) {
 	type contextKey string
 	ctx := context.Background()
 	err := tqs.queryService.ArchiveTrace(context.WithValue(ctx, contextKey("foo"), "bar"), mockTraceID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // Test QueryService.Adjust()
@@ -264,7 +265,7 @@ func TestTraceAdjustmentFailure(t *testing.T) {
 	tqs := initializeTestService(withAdjuster())
 
 	_, err := tqs.queryService.Adjust(mockTrace)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.EqualValues(t, errAdjustment.Error(), err.Error())
 }
 
@@ -282,12 +283,29 @@ func TestGetDependencies(t *testing.T) {
 	tqs.depsReader.On("GetDependencies", endTs, defaultDependencyLookbackDuration).Return(expectedDependencies, nil).Times(1)
 
 	actualDependencies, err := tqs.queryService.GetDependencies(context.Background(), time.Unix(0, 1476374248550*millisToNanosMultiplier), defaultDependencyLookbackDuration)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, expectedDependencies, actualDependencies)
 }
 
-type fakeStorageFactory1 struct {
+// Test QueryService.GetCapacities()
+func TestGetCapabilities(t *testing.T) {
+	tqs := initializeTestService()
+	expectedStorageCapabilities := StorageCapabilities{
+		ArchiveStorage: false,
+	}
+	assert.Equal(t, expectedStorageCapabilities, tqs.queryService.GetCapabilities())
 }
+
+func TestGetCapabilitiesWithSupportsArchive(t *testing.T) {
+	tqs := initializeTestService(withArchiveSpanReader(), withArchiveSpanWriter())
+
+	expectedStorageCapabilities := StorageCapabilities{
+		ArchiveStorage: true,
+	}
+	assert.Equal(t, expectedStorageCapabilities, tqs.queryService.GetCapabilities())
+}
+
+type fakeStorageFactory1 struct{}
 
 type fakeStorageFactory2 struct {
 	fakeStorageFactory1
@@ -307,8 +325,10 @@ func (*fakeStorageFactory1) CreateDependencyReader() (dependencystore.Reader, er
 func (f *fakeStorageFactory2) CreateArchiveSpanReader() (spanstore.Reader, error) { return f.r, f.rErr }
 func (f *fakeStorageFactory2) CreateArchiveSpanWriter() (spanstore.Writer, error) { return f.w, f.wErr }
 
-var _ storage.Factory = new(fakeStorageFactory1)
-var _ storage.ArchiveFactory = new(fakeStorageFactory2)
+var (
+	_ storage.Factory        = new(fakeStorageFactory1)
+	_ storage.ArchiveFactory = new(fakeStorageFactory2)
+)
 
 func TestInitArchiveStorageErrors(t *testing.T) {
 	opts := &QueryServiceOptions{}
@@ -344,4 +364,8 @@ func TestInitArchiveStorage(t *testing.T) {
 	))
 	assert.Equal(t, reader, opts.ArchiveSpanReader)
 	assert.Equal(t, writer, opts.ArchiveSpanWriter)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

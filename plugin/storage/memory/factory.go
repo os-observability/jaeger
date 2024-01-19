@@ -19,13 +19,23 @@ import (
 	"flag"
 
 	"github.com/spf13/viper"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/pkg/distributedlock"
+	"github.com/jaegertracing/jaeger/pkg/memory/config"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/plugin"
+	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	"github.com/jaegertracing/jaeger/storage/samplingstore"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
+)
+
+var ( // interface comformance checks
+	_ storage.Factory              = (*Factory)(nil)
+	_ storage.ArchiveFactory       = (*Factory)(nil)
+	_ storage.SamplingStoreFactory = (*Factory)(nil)
+	_ plugin.Configurable          = (*Factory)(nil)
 )
 
 // Factory implements storage.Factory and creates storage components backed by memory store.
@@ -39,6 +49,18 @@ type Factory struct {
 // NewFactory creates a new Factory.
 func NewFactory() *Factory {
 	return &Factory{}
+}
+
+// NewFactoryWithConfig is used from jaeger(v2).
+func NewFactoryWithConfig(
+	cfg config.Configuration,
+	metricsFactory metrics.Factory,
+	logger *zap.Logger,
+) *Factory {
+	f := NewFactory()
+	f.InitFromOptions(Options{Configuration: cfg})
+	_ = f.Initialize(metricsFactory, logger)
+	return f
 }
 
 // AddFlags implements plugin.Configurable
@@ -60,7 +82,7 @@ func (f *Factory) InitFromOptions(opts Options) {
 func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger) error {
 	f.metricsFactory, f.logger = metricsFactory, logger
 	f.store = WithConfiguration(f.options.Configuration)
-	logger.Info("Memory storage initialized", zap.Any("configuration", f.store.config))
+	logger.Info("Memory storage initialized", zap.Any("configuration", f.store.defaultConfig))
 	f.publishOpts()
 
 	return nil
@@ -73,6 +95,16 @@ func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
 
 // CreateSpanWriter implements storage.Factory
 func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
+	return f.store, nil
+}
+
+// CreateArchiveSpanReader implements storage.ArchiveFactory
+func (f *Factory) CreateArchiveSpanReader() (spanstore.Reader, error) {
+	return f.store, nil
+}
+
+// CreateArchiveSpanWriter implements storage.ArchiveFactory
+func (f *Factory) CreateArchiveSpanWriter() (spanstore.Writer, error) {
 	return f.store, nil
 }
 

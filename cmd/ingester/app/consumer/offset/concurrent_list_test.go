@@ -92,12 +92,12 @@ func TestMultipleInsertsAndResets(t *testing.T) {
 	}
 	l.insert(50)
 
-	assert.Equal(t, 101, len(l.offsets))
+	assert.Len(t, l.offsets, 101)
 	assert.Equal(t, int64(50), l.offsets[100])
 
 	r := l.setToHighestContiguous()
 	assert.Equal(t, int64(50), r)
-	assert.Equal(t, 101, len(l.offsets))
+	assert.Len(t, l.offsets, 101)
 
 	for i := 51; i < 99; i++ {
 		l.insert(int64(i))
@@ -105,7 +105,7 @@ func TestMultipleInsertsAndResets(t *testing.T) {
 
 	r = l.setToHighestContiguous()
 	assert.Equal(t, int64(98), r)
-	assert.Equal(t, 101, len(l.offsets))
+	assert.Len(t, l.offsets, 101)
 }
 
 // Heaps algorithm as per https://stackoverflow.com/questions/30226438/generate-all-permutations-in-go
@@ -122,13 +122,9 @@ func generatePermutations(arr []int64) [][]int64 {
 			for i := 0; i < n; i++ {
 				helper(arr, n-1)
 				if n%2 == 1 {
-					tmp := arr[i]
-					arr[i] = arr[n-1]
-					arr[n-1] = tmp
+					arr[i], arr[n-1] = arr[n-1], arr[i]
 				} else {
-					tmp := arr[0]
-					arr[0] = arr[n-1]
-					arr[n-1] = tmp
+					arr[0], arr[n-1] = arr[n-1], arr[0]
 				}
 			}
 		}

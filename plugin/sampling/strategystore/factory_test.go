@@ -18,28 +18,25 @@ package strategystore
 import (
 	"errors"
 	"flag"
-	"os"
 	"testing"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	ss "github.com/jaegertracing/jaeger/cmd/collector/app/sampling/strategystore"
 	"github.com/jaegertracing/jaeger/pkg/distributedlock"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/plugin"
 	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/samplingstore"
 )
 
-func clearEnv() {
-	os.Setenv(SamplingTypeEnvVar, "static")
-}
-
-var _ ss.Factory = new(Factory)
-var _ plugin.Configurable = new(Factory)
+var (
+	_ ss.Factory          = new(Factory)
+	_ plugin.Configurable = new(Factory)
+)
 
 func TestNewFactory(t *testing.T) {
 	tests := []struct {
@@ -69,7 +66,7 @@ func TestNewFactory(t *testing.T) {
 	for _, tc := range tests {
 		f, err := NewFactory(FactoryConfig{StrategyStoreType: Kind(tc.strategyStoreType)})
 		if tc.expectError {
-			assert.Error(t, err)
+			require.Error(t, err)
 			continue
 		}
 		assert.NotEmpty(t, f.factories)
@@ -79,26 +76,25 @@ func TestNewFactory(t *testing.T) {
 		mock := new(mockFactory)
 		f.factories[Kind(tc.strategyStoreType)] = mock
 
-		assert.NoError(t, f.Initialize(metrics.NullFactory, mockSSFactory, zap.NewNop()))
+		require.NoError(t, f.Initialize(metrics.NullFactory, mockSSFactory, zap.NewNop()))
 		_, _, err = f.CreateStrategyStore()
 		require.NoError(t, err)
 
 		// force the mock to return errors
 		mock.retError = true
-		assert.EqualError(t, f.Initialize(metrics.NullFactory, mockSSFactory, zap.NewNop()), "error initializing store")
+		require.EqualError(t, f.Initialize(metrics.NullFactory, mockSSFactory, zap.NewNop()), "error initializing store")
 		_, _, err = f.CreateStrategyStore()
-		assert.EqualError(t, err, "error creating store")
+		require.EqualError(t, err, "error creating store")
 
 		// request something that doesn't exist
 		f.StrategyStoreType = "doesntexist"
 		_, _, err = f.CreateStrategyStore()
-		assert.EqualError(t, err, "no doesntexist strategy store registered")
+		require.EqualError(t, err, "no doesntexist strategy store registered")
 	}
 }
 
 func TestConfigurable(t *testing.T) {
-	clearEnv()
-	defer clearEnv()
+	t.Setenv(SamplingTypeEnvVar, "static")
 
 	f, err := NewFactory(FactoryConfig{StrategyStoreType: "file"})
 	require.NoError(t, err)
@@ -153,6 +149,7 @@ type mockSamplingStoreFactory struct{}
 func (m *mockSamplingStoreFactory) CreateLock() (distributedlock.Lock, error) {
 	return nil, nil
 }
+
 func (m *mockSamplingStoreFactory) CreateSamplingStore(maxBuckets int) (samplingstore.Store, error) {
 	return nil, nil
 }

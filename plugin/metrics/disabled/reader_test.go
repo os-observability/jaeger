@@ -16,7 +16,6 @@ package disabled
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,8 +32,8 @@ func TestGetLatencies(t *testing.T) {
 	qParams := &metricsstore.LatenciesQueryParameters{}
 	r, err := reader.GetLatencies(context.Background(), qParams)
 	assert.Zero(t, r)
-	assert.True(t, errors.Is(err, ErrDisabled))
-	assert.EqualError(t, err, ErrDisabled.Error())
+	require.ErrorIs(t, err, ErrDisabled)
+	require.EqualError(t, err, ErrDisabled.Error())
 }
 
 func TestGetCallRates(t *testing.T) {
@@ -45,8 +44,8 @@ func TestGetCallRates(t *testing.T) {
 	qParams := &metricsstore.CallRateQueryParameters{}
 	r, err := reader.GetCallRates(context.Background(), qParams)
 	assert.Zero(t, r)
-	assert.True(t, errors.Is(err, ErrDisabled))
-	assert.EqualError(t, err, ErrDisabled.Error())
+	require.ErrorIs(t, err, ErrDisabled)
+	require.EqualError(t, err, ErrDisabled.Error())
 }
 
 func TestGetErrorRates(t *testing.T) {
@@ -57,8 +56,8 @@ func TestGetErrorRates(t *testing.T) {
 	qParams := &metricsstore.ErrorRateQueryParameters{}
 	r, err := reader.GetErrorRates(context.Background(), qParams)
 	assert.Zero(t, r)
-	assert.True(t, errors.Is(err, ErrDisabled))
-	assert.EqualError(t, err, ErrDisabled.Error())
+	require.ErrorIs(t, err, ErrDisabled)
+	require.EqualError(t, err, ErrDisabled.Error())
 }
 
 func TestGetMinStepDurations(t *testing.T) {
@@ -69,6 +68,6 @@ func TestGetMinStepDurations(t *testing.T) {
 	qParams := &metricsstore.MinStepDurationQueryParameters{}
 	r, err := reader.GetMinStepDuration(context.Background(), qParams)
 	assert.Zero(t, r)
-	assert.True(t, errors.Is(err, ErrDisabled))
-	assert.EqualError(t, err, ErrDisabled.Error())
+	require.ErrorIs(t, err, ErrDisabled)
+	require.EqualError(t, err, ErrDisabled.Error())
 }

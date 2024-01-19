@@ -24,13 +24,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/cassandra"
 	"github.com/jaegertracing/jaeger/pkg/cassandra/mocks"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 )
@@ -57,8 +58,10 @@ func withDepStore(version Version, fn func(s *depStorageTest)) {
 	fn(s)
 }
 
-var _ dependencystore.Reader = &DependencyStore{} // check API conformance
-var _ dependencystore.Writer = &DependencyStore{} // check API conformance
+var (
+	_ dependencystore.Reader = &DependencyStore{} // check API conformance
+	_ dependencystore.Writer = &DependencyStore{} // check API conformance
+)
 
 func TestVersionIsValid(t *testing.T) {
 	assert.True(t, V1.IsValid())
@@ -68,7 +71,7 @@ func TestVersionIsValid(t *testing.T) {
 
 func TestInvalidVersion(t *testing.T) {
 	_, err := NewDependencyStore(&mocks.Session{}, metrics.NullFactory, zap.NewNop(), versionEnumEnd)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestDependencyStoreWrite(t *testing.T) {
@@ -110,7 +113,7 @@ func TestDependencyStoreWrite(t *testing.T) {
 					},
 				}
 				err := s.storage.WriteDependencies(ts, dependencies)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 
 				assert.Len(t, args, 3)
 				if d, ok := args[0].(time.Time); ok {
@@ -229,7 +232,7 @@ func TestDependencyStoreGetDependencies(t *testing.T) {
 				deps, err := s.storage.GetDependencies(context.Background(), time.Now(), 48*time.Hour)
 
 				if testCase.expectedError == "" {
-					assert.NoError(t, err)
+					require.NoError(t, err)
 					expected := []model.DependencyLink{
 						{Parent: "a", Child: "b", CallCount: 1, Source: model.JaegerDependencyLinkSource},
 						{Parent: "b", Child: "c", CallCount: 1, Source: model.JaegerDependencyLinkSource},
@@ -238,7 +241,7 @@ func TestDependencyStoreGetDependencies(t *testing.T) {
 					}
 					assert.Equal(t, expected, deps)
 				} else {
-					assert.EqualError(t, err, testCase.expectedError)
+					require.EqualError(t, err, testCase.expectedError)
 				}
 				for _, expectedLog := range testCase.expectedLogs {
 					assert.True(t, strings.Contains(s.logBuffer.String(), expectedLog), "Log must contain %s, but was %s", expectedLog, s.logBuffer.String())

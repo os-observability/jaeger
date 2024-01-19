@@ -277,11 +277,10 @@ func serviceQueries(query *spanstore.TraceQueryParameters, indexSeeks [][]byte) 
 		if query.OperationName != "" {
 			indexSearchKey = append(indexSearchKey, operationNameIndexKey)
 			indexSearchKey = append(indexSearchKey, []byte(query.ServiceName+query.OperationName)...)
-		} else {
-			if !tagQueryUsed { // Tag query already reduces the search set with a serviceName
-				indexSearchKey = append(indexSearchKey, serviceNameIndexKey)
-				indexSearchKey = append(indexSearchKey, []byte(query.ServiceName)...)
-			}
+		} else if !tagQueryUsed { // Tag query already reduces the search set with a serviceName
+			indexSearchKey = append(indexSearchKey, serviceNameIndexKey)
+			indexSearchKey = append(indexSearchKey, []byte(query.ServiceName)...)
+
 		}
 
 		if len(indexSearchKey) > 0 {
@@ -293,7 +292,6 @@ func serviceQueries(query *spanstore.TraceQueryParameters, indexSeeks [][]byte) 
 
 // indexSeeksToTraceIDs does the index scanning against badger based on the parsed index queries
 func (r *TraceReader) indexSeeksToTraceIDs(plan *executionPlan, indexSeeks [][]byte) ([]model.TraceID, error) {
-
 	for i := len(indexSeeks) - 1; i > 0; i-- {
 		indexResults, err := r.scanIndexKeys(indexSeeks[i], plan)
 		if err != nil {

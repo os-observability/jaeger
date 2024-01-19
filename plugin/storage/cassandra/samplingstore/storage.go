@@ -18,6 +18,7 @@ package samplingstore
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -25,12 +26,12 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/sampling/model"
 	"github.com/jaegertracing/jaeger/pkg/cassandra"
 	casMetrics "github.com/jaegertracing/jaeger/pkg/cassandra/metrics"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
 const (
@@ -127,8 +128,10 @@ func probabilitiesAndQPSToString(probabilities model.ServiceOperationProbabiliti
 			if _, ok := qps[svc]; ok {
 				opQPS = qps[svc][op]
 			}
-			writer.Write([]string{svc, op, strconv.FormatFloat(probability, 'f', -1, 64),
-				strconv.FormatFloat(opQPS, 'f', -1, 64)})
+			writer.Write([]string{
+				svc, op, strconv.FormatFloat(probability, 'f', -1, 64),
+				strconv.FormatFloat(opQPS, 'f', -1, 64),
+			})
 		}
 	}
 	writer.Flush()
@@ -245,7 +248,7 @@ func (s *SamplingStore) parseString(str string, numColumns int, appendFunc func(
 	reader := csv.NewReader(strings.NewReader(str))
 	for {
 		csvFields, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

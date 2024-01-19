@@ -15,10 +15,10 @@
 package uiconv
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
-	"github.com/go-openapi/swag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -30,18 +30,15 @@ type UITrace struct {
 	Data []model.Trace
 }
 
-func TestExtractor_TraceSuccess(t *testing.T) {
+func TestExtractorTraceSuccess(t *testing.T) {
 	inputFile := "fixtures/trace_success.json"
 	outputFile := "fixtures/trace_success_ui_anonymized.json"
 	defer os.Remove(outputFile)
 
-	reader, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	reader, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
-	extractor, err := NewExtractor(
+	extractor, err := newExtractor(
 		outputFile,
 		"2be38093ead7a083",
 		reader,
@@ -62,22 +59,19 @@ func TestExtractor_TraceSuccess(t *testing.T) {
 	}
 }
 
-func TestExtractor_TraceOutputFileError(t *testing.T) {
+func TestExtractorTraceOutputFileError(t *testing.T) {
 	inputFile := "fixtures/trace_success.json"
 	outputFile := "fixtures/trace_success_ui_anonymized.json"
 	defer os.Remove(outputFile)
 
-	reader, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	reader, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
-	err = os.Chmod("fixtures", 0000)
+	err = os.Chmod("fixtures", 0o000)
 	require.NoError(t, err)
-	defer os.Chmod("fixtures", 0755)
+	defer os.Chmod("fixtures", 0o755)
 
-	_, err = NewExtractor(
+	_, err = newExtractor(
 		outputFile,
 		"2be38093ead7a083",
 		reader,
@@ -86,18 +80,15 @@ func TestExtractor_TraceOutputFileError(t *testing.T) {
 	require.Contains(t, err.Error(), "cannot create output file")
 }
 
-func TestExtractor_TraceScanError(t *testing.T) {
+func TestExtractorTraceScanError(t *testing.T) {
 	inputFile := "fixtures/trace_scan_error.json"
 	outputFile := "fixtures/trace_scan_error_ui_anonymized.json"
 	defer os.Remove(outputFile)
 
-	reader, err := NewReader(
-		inputFile,
-		zap.NewNop(),
-	)
+	reader, err := newSpanReader(inputFile, zap.NewNop())
 	require.NoError(t, err)
 
-	extractor, err := NewExtractor(
+	extractor, err := newExtractor(
 		outputFile,
 		"2be38093ead7a083",
 		reader,
@@ -112,6 +103,6 @@ func TestExtractor_TraceScanError(t *testing.T) {
 func loadJSON(t *testing.T, fileName string, i interface{}) {
 	b, err := os.ReadFile(fileName)
 	require.NoError(t, err)
-	err = swag.ReadJSON(b, i)
+	err = json.Unmarshal(b, i)
 	require.NoError(t, err, "Failed to parse json fixture file %s", fileName)
 }

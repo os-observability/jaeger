@@ -13,3 +13,13 @@
 // limitations under the License.
 
 package processor
+
+import (
+	"testing"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
+)
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
+}

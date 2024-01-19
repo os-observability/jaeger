@@ -25,6 +25,7 @@ import (
 	"github.com/jaegertracing/jaeger/pkg/config"
 	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/kafka/auth"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/kafka"
 )
 
@@ -109,4 +110,8 @@ func TestFlagDefaults(t *testing.T) {
 	assert.Equal(t, DefaultParallelism, o.Parallelism)
 	assert.Equal(t, DefaultEncoding, o.Encoding)
 	assert.Equal(t, DefaultDeadlockInterval, o.DeadlockInterval)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

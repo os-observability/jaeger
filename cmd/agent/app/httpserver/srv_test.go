@@ -20,9 +20,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestHTTPServer(t *testing.T) {
 	s := NewHTTPServer(":1", nil, nil, zap.NewNop())
 	assert.NotNil(t, s)
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

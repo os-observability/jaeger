@@ -15,17 +15,17 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"path"
+	"fmt"
 	"strings"
 
-	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	"github.com/hashicorp/go-plugin"
-	"github.com/opentracing/opentracing-go"
 	"github.com/spf13/viper"
-	jaegerClientConfig "github.com/uber/jaeger-client-go/config"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	googleGRPC "google.golang.org/grpc"
 
+	"github.com/jaegertracing/jaeger/pkg/jtracer"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc"
 	grpcMemory "github.com/jaegertracing/jaeger/plugin/storage/grpc/memory"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc/shared"
@@ -42,42 +42,37 @@ func main() {
 	flag.StringVar(&configPath, "config", "", "A path to the plugin's configuration file")
 	flag.Parse()
 
-	if configPath != "" {
-		viper.SetConfigFile(path.Base(configPath))
-		viper.AddConfigPath(path.Dir(configPath))
-	}
-
 	v := viper.New()
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			panic(err)
+		}
+	}
+
 	opts := memory.Options{}
 	opts.InitFromViper(v)
 
-	traceCfg := &jaegerClientConfig.Configuration{
-		ServiceName: serviceName,
-		Sampler: &jaegerClientConfig.SamplerConfig{
-			Type:  "const",
-			Param: 1.0,
-		},
-		RPCMetrics: true,
-	}
-
-	tracer, closer, err := traceCfg.NewTracer()
+	tracer, err := jtracer.New(serviceName)
 	if err != nil {
-		panic("Failed to initialize tracer")
+		panic(fmt.Errorf("failed to initialize tracer: %w", err))
 	}
-	defer closer.Close()
-	opentracing.SetGlobalTracer(tracer)
+	defer tracer.Close(context.Background())
 
 	memStorePlugin := grpcMemory.NewStoragePlugin(memory.NewStore(), memory.NewStore())
-	grpc.ServeWithGRPCServer(&shared.PluginServices{
+	service := &shared.PluginServices{
 		Store:        memStorePlugin,
 		ArchiveStore: memStorePlugin,
-	}, func(options []googleGRPC.ServerOption) *googleGRPC.Server {
+	}
+	if v.GetBool("enable_streaming_writer") {
+		service.StreamingSpanWriter = memStorePlugin
+	}
+	grpc.ServeWithGRPCServer(service, func(options []googleGRPC.ServerOption) *googleGRPC.Server {
 		return plugin.DefaultGRPCServer([]googleGRPC.ServerOption{
-			googleGRPC.UnaryInterceptor(otgrpc.OpenTracingServerInterceptor(tracer)),
-			googleGRPC.StreamInterceptor(otgrpc.OpenTracingStreamServerInterceptor(tracer)),
+			googleGRPC.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithTracerProvider(tracer.OTEL))),
 		})
 	})
 }

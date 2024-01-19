@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestLRU(t *testing.T) {
@@ -65,7 +67,7 @@ func TestCompareAndSwap(t *testing.T) {
 	cache := NewLRU(2)
 
 	item, ok := cache.CompareAndSwap("A", nil, "Foo")
-	assert.Equal(t, true, ok)
+	assert.True(t, ok)
 	assert.Equal(t, "Foo", item)
 	assert.Equal(t, "Foo", cache.Get("A"))
 	assert.Nil(t, cache.Get("B"))
@@ -239,4 +241,8 @@ func (c *simulatedClock) Elapse(d time.Duration) time.Time {
 	defer c.Unlock()
 	c.currTime = c.currTime.Add(d)
 	return c.currTime
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 func TestSetupContext(t *testing.T) {
@@ -25,4 +27,8 @@ func TestSetupContext(t *testing.T) {
 	SetAllInOne()
 	defer UnsetAllInOne()
 	assert.True(t, IsAllInOne())
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

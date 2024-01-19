@@ -1,18 +1,34 @@
-<img align="right" width="290" height="290" src="https://www.jaegertracing.io/img/jaeger-vector.svg">
+[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://stand-with-ukraine.pp.ua)
 
+<img align="right" width="290" height="290" src="https://www.jaegertracing.io/img/jaeger-vector.svg">
 
 [![Slack chat][slack-img]](#get-in-touch)
 [![Project+Community stats][community-badge]][community-stats]
-[![OpenTracing-1.0][ot-badge]](https://opentracing.io)
-[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge-flat.svg)](https://github.com/avelino/awesome-go#performance)
 [![Unit Tests][ci-img]][ci]
 [![Coverage Status][cov-img]][cov]
-[![FOSSA Status][fossa-img]][ci]
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/1273/badge)](https://bestpractices.coreinfrastructure.org/projects/1273)
+[![FOSSA Status][fossa-img]](https://app.fossa.io/projects/git%2Bgithub.com%2Fjaegertracing%2Fjaeger?ref=badge_shield)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/jaegertracing/jaeger/badge)](https://securityscorecards.dev/viewer/?uri=github.com/jaegertracing/jaeger)
 
-<img src="https://github.com/cncf/artwork/blob/master/other/cncf-member/graduated/color/cncf-graduated-color.svg" width="250">
+<img src="https://raw.githubusercontent.com/cncf/artwork/main/other/cncf-member/graduated/color/cncf-graduated-color.svg" width="250">
 
 # Jaeger - a Distributed Tracing System
+
+```mermaid
+graph TD
+    SDK["OpenTelemetry SDK"] --> |HTTP or gRPC| COLLECTOR
+    COLLECTOR["Jaeger Collector"] --> STORE[Storage]
+    COLLECTOR --> |gRPC| PLUGIN[Storage Plugin]
+    COLLECTOR --> |gRPC/sampling| SDK
+    PLUGIN --> STORE
+    QUERY[Jaeger Query Service] --> STORE
+    QUERY --> |gRPC| PLUGIN
+    UI[Jaeger UI] --> |HTTP| QUERY
+    subgraph Application Host
+        subgraph User Application
+            SDK
+        end
+    end
+```
 
 Jaeger, inspired by [Dapper][dapper] and [OpenZipkin](https://zipkin.io),
 is a distributed tracing platform created by [Uber Technologies][ubeross]
@@ -29,13 +45,13 @@ See also:
 
   * Jaeger [documentation][doc] for getting started, operational details, and other information.
   * Blog post [Evolving Distributed Tracing at Uber](https://eng.uber.com/distributed-tracing/).
-  * Tutorial / walkthrough [Take OpenTracing for a HotROD ride][hotrod-tutorial].
+  * Tutorial / walkthrough [Take Jaeger for a HotROD ride][hotrod-tutorial].
 
 Jaeger is hosted by the [Cloud Native Computing Foundation](https://cncf.io) (CNCF) as the 7th top-level project (graduated in October 2019). If you are a company that wants to help shape the evolution of technologies that are container-packaged, dynamically-scheduled and microservices-oriented, consider joining the CNCF. For details about who's involved and how Jaeger plays a role, read the CNCF [Jaeger incubation announcement](https://www.cncf.io/blog/2017/09/13/cncf-hosts-jaeger/) and [Jaeger graduation announcement](https://www.cncf.io/announcement/2019/10/31/cloud-native-computing-foundation-announces-jaeger-graduation/).
 
 ## Get Involved
 
-Jaeger is an open source project with open governance. We welcome contributions from the community, and we’d love your help to improve and extend the project. Here are [some ideas](https://www.jaegertracing.io/get-involved/) for how to get involved. Many of them don’t even require any coding.
+Jaeger is an open source project with open governance. We welcome contributions from the community, and we would love your help to improve and extend the project. Here are [some ideas](https://www.jaegertracing.io/get-involved/) for how to get involved. Many of them do not even require any coding.
 
 ## Features
 
@@ -44,23 +60,28 @@ Jaeger is an open source project with open governance. We welcome contributions 
 Jaeger backend is designed to have no single points of failure and to scale with the business needs.
 For example, any given Jaeger installation at Uber is typically processing several billions of spans per day.
 
-### Native support for OpenTracing
+### Relationship with OpenTelemetry
 
-Jaeger backend, Web UI, and instrumentation libraries have been designed from the ground up to support the [OpenTracing standard](https://opentracing.io/specification/).
-  * Represent traces as directed acyclic graphs (not just trees) via [span references](https://github.com/opentracing/specification/blob/master/specification.md#references-between-spans)
-  * Support strongly typed span _tags_ and _structured logs_
-  * Support general distributed context propagation mechanism via _baggage_
+The Jaeger and [OpenTelemetry](https://opentelemetry.io) projects have different goals. OpenTelemetry aims to provide APIs and SDKs in multiple languages to allow applications to export various telemetry data out of the process, to any number of metrics and tracing backends. The Jaeger project is primarily the tracing backend that receives tracing telemetry data and provides processing, aggregation, data mining, and visualizations of that data. For more information please refer to a blog post [Jaeger and OpenTelemetry](https://medium.com/jaegertracing/jaeger-and-opentelemetry-1846f701d9f2).
 
-#### OpenTelemetry
+Jaeger was originally designed to support the [OpenTracing standard](https://opentracing.io/specification/). The terminology is still used in Jaeger UI, but the concepts have direct mapping to the OpenTelemetry data model of traces.
 
-On 28-May-2019, [the OpenTracing and OpenCensus projects announced](https://medium.com/opentracing/merging-opentracing-and-opencensus-f0fe9c7ca6f0) their intention to merge into a new CNCF project called [OpenTelemetry](https://opentelemetry.io). The Jaeger and OpenTelemetry projects have different goals. OpenTelemetry aims to provide APIs and SDKs in multiple languages to allow applications to export various telemetry data out of the process, to any number of metrics and tracing backends. The Jaeger project is primarily the tracing backend that receives tracing telemetry data and provides processing, aggregation, data mining, and visualizations of that data. The Jaeger client libraries do overlap with OpenTelemetry in functionality. OpenTelemetry will natively support Jaeger as a tracing backend and eventually might make Jaeger native clients unnecessary. For more information please refer to a blog post [Jaeger and OpenTelemetry](https://medium.com/jaegertracing/jaeger-and-opentelemetry-1846f701d9f2).
+| Capability    | OpenTracing concept | OpenTelemetry concept |
+| ------------- | ------------------- | --------------------- |
+| Represent traces as directed acyclic graphs (not just trees)  | [span references](https://github.com/opentracing/specification/blob/master/specification.md#references-between-spans) | [span links](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/api.md#span) |
+| Strongly typed span attributes  | span tags | span attributes |
+| Strongly typed events/logs  | span logs | span events |
+
+Jaeger project recommends OpenTelemetry SDKs for instrumentation, instead of [now-deprecated Jaeger SDKs](https://www.jaegertracing.io/docs/latest/client-libraries/#deprecating-jaeger-clients).
 
 ### Multiple storage backends
 
-Jaeger supports two popular open source NoSQL databases as trace storage backends: Cassandra and Elasticsearch.
-There is also embedded database support using [Badger](https://github.com/dgraph-io/badger).
-There are ongoing community experiments using other databases, such as ScyllaDB, InfluxDB, Amazon DynamoDB.
-Jaeger also ships with a simple in-memory storage for testing setups.
+Jaeger can be used with a growing a number of storage backends:
+* It natively supports two popular open source NoSQL databases as trace storage backends: Cassandra and Elasticsearch.
+* It integrates via a gRPC API with other well known databases that have been certified to be Jaeger compliant: [TimescaleDB via Promscale](https://github.com/timescale/promscale), [ClickHouse](https://github.com/jaegertracing/jaeger-clickhouse).
+* There is embedded database support using [Badger](https://github.com/dgraph-io/badger) and simple in-memory storage for testing setups.
+* ScyllaDB [can be used](https://github.com/jaegertracing/jaeger/blob/main/plugin/storage/scylladb/README.md) as a drop-in replacement for Cassandra since it uses the same data model and query language.
+* There are ongoing community experiments using other databases, such as InfluxDB, Amazon DynamoDB, YugabyteDB(YCQL).
 
 ### Modern Web UI
 
@@ -71,9 +92,14 @@ traces with tens of thousands of spans (e.g. we tried a trace with 80,000 spans)
 ### Cloud Native Deployment
 
 Jaeger backend is distributed as a collection of Docker images. The binaries support various configuration methods,
-including command line options, environment variables, and configuration files in multiple formats (yaml, toml, etc.)
-Deployment to Kubernetes clusters is assisted by [Kubernetes templates](https://github.com/jaegertracing/jaeger-kubernetes)
-and a [Helm chart](https://github.com/jaegertracing/helm-charts).
+including command line options, environment variables, and configuration files in multiple formats (yaml, toml, etc.).
+
+The recommended way to deploy Jaeger in a production Kubernetes cluster is via the [Jaeger Operator](https://github.com/jaegertracing/jaeger-operator).
+
+The Jaeger Operator provides a [CLI to generate](https://github.com/jaegertracing/jaeger-operator#experimental-generate-kubernetes-manifest-file) Kubernetes manifests from the Jaeger CR.
+This can be considered as an alternative source over plain Kubernetes manifest files.
+
+The Jaeger ecosystem also provides a [Helm chart](https://github.com/jaegertracing/helm-charts) as an alternative way to deploy Jaeger.
 
 ### Observability
 
@@ -86,8 +112,7 @@ Third-party security audits of Jaeger are available in https://github.com/jaeger
 
 ### Backwards compatibility with Zipkin
 
-Although we recommend instrumenting applications with OpenTracing API and binding to Jaeger client libraries to benefit
-from advanced features not available elsewhere, if your organization has already invested in the instrumentation
+Although we recommend instrumenting applications with OpenTelemetry, if your organization has already invested in the instrumentation
 using Zipkin libraries, you do not have to rewrite all that code. Jaeger provides backwards compatibility with Zipkin
 by accepting spans in Zipkin formats (Thrift or JSON v1/v2) over HTTP. Switching from Zipkin backend is just a matter
 of routing the traffic from Zipkin libraries to the Jaeger backend.
@@ -109,6 +134,16 @@ For example, consider a scenario where v1.28.0 is released on 01-Jun-2021 contai
 This flag will remain in a deprecated state until the later of 01-Sep-2021 or v1.30.0 where it _can_ be removed on or after either of those events.
 It may remain deprecated for longer than the aforementioned grace period.
 
+## Go Version Compatibility Guarantees
+
+The Jaeger project attempts to track the currently supported versions of Go, as [defined by the Go team](https://go.dev/doc/devel/release#policy).
+Removing support for an unsupported Go version is not considered a breaking change.
+
+Starting with the release of Go 1.21, support for Go versions will be updated as follows:
+
+1. Soon after the release of a new Go minor version `N`, updates will be made to the build and tests steps to accommodate the latest Go minor version.
+2. Soon after the release of a new Go minor version `N`, support for Go version `N-2` will be removed and version `N-1` will become the minimum required version.
+
 ## Related Repositories
 
 ### Documentation
@@ -118,12 +153,7 @@ It may remain deprecated for longer than the aforementioned grace period.
 
 ### Instrumentation Libraries
 
- * [Go client](https://github.com/jaegertracing/jaeger-client-go)
- * [Java client](https://github.com/jaegertracing/jaeger-client-java)
- * [Python client](https://github.com/jaegertracing/jaeger-client-python)
- * [Node.js client](https://github.com/jaegertracing/jaeger-client-node)
- * [C++ client](https://github.com/jaegertracing/jaeger-client-cpp)
- * [C# client](https://github.com/jaegertracing/jaeger-client-csharp)
+Jaeger project recommends OpenTelemetry SDKs for instrumentation, instead of Jaeger's native SDKs [that are now deprecated](https://www.jaegertracing.io/docs/latest/client-libraries/#deprecating-jaeger-clients).
 
 ### Deployment
 
@@ -133,7 +163,6 @@ It may remain deprecated for longer than the aforementioned grace period.
 
  * [UI](https://github.com/jaegertracing/jaeger-ui)
  * [Data model](https://github.com/jaegertracing/jaeger-idl)
- * [Shared libs](https://github.com/jaegertracing/jaeger-lib)
 
 ## Building From Source
 
@@ -156,10 +185,9 @@ Below are the official maintainers of the Jaeger project.
 Please use `@jaegertracing/jaeger-maintainers` to tag them on issues / PRs.
 
 * [@albertteoh](https://github.com/albertteoh)
+* [@jkowall](https://github.com/jkowall)
 * [@joe-elliott](https://github.com/joe-elliott)
-* [@jpkrohling](https://github.com/jpkrohling)
 * [@pavolloffay](https://github.com/pavolloffay)
-* [@vprithvi](https://github.com/vprithvi)
 * [@yurishkuro](https://github.com/yurishkuro)
 
 Some repositories under [jaegertracing](https://github.com/jaegertracing) org have additional maintainers.
@@ -169,13 +197,14 @@ Some repositories under [jaegertracing](https://github.com/jaegertracing) org ha
 We are grateful to our former maintainers for their contributions to the Jaeger project.
 
 * [@black-adder](https://github.com/black-adder)
+* [@jpkrohling](https://github.com/jpkrohling)
 * [@objectiser](https://github.com/objectiser)
 * [@tiffon](https://github.com/tiffon)
+* [@vprithvi](https://github.com/vprithvi)
 
-## Project Status Bi-Weekly Meeting
+## Project Status Meetings
 
-The Jaeger contributors meet bi-weekly, and everyone is welcome to join.
-[Agenda and meeting details here](https://docs.google.com/document/d/1ZuBAwTJvQN7xkWVvEFXj5WU9_JmS5TPiNbxCJSvPqX0/).
+The Jaeger maintainers and contributors meet regularly on a video call. Everyone is welcome to join, including end users. For meeting details, see https://www.jaegertracing.io/get-in-touch/.
 
 ## Roadmap
 
@@ -201,22 +230,21 @@ If you would like to add your organization to the list, please comment on our
 
 ## License
 
-[Apache 2.0 License](./LICENSE).
+Copyright (c) The Jaeger Authors. [Apache 2.0 License](./LICENSE).
 
 [doc]: https://jaegertracing.io/docs/
 [godoc-img]: https://godoc.org/github.com/jaegertracing/jaeger?status.svg
 [godoc]: https://godoc.org/github.com/jaegertracing/jaeger
-[ci-img]: https://github.com/jaegertracing/jaeger/workflows/Unit%20Tests/badge.svg?branch=main
-[ci]: https://github.com/jaegertracing/jaeger/actions?query=branch%3Amain
+[ci-img]: https://github.com/jaegertracing/jaeger/actions/workflows/ci-unit-tests.yml/badge.svg?branch=main
+[ci]: https://github.com/jaegertracing/jaeger/actions/workflows/ci-unit-tests.yml?query=branch%3Amain
 [cov-img]: https://codecov.io/gh/jaegertracing/jaeger/branch/main/graph/badge.svg
 [cov]: https://codecov.io/gh/jaegertracing/jaeger/branch/main/
-[fossa-img]: https://github.com/jaegertracing/jaeger/workflows/FOSSA/badge.svg?branch=main
+[fossa-img]: https://app.fossa.com/api/projects/git%2Bgithub.com%2Fjaegertracing%2Fjaeger.svg?type=shield
 [dapper]: https://research.google.com/pubs/pub36356.html
 [ubeross]: https://uber.github.io
-[ot-badge]: https://img.shields.io/badge/OpenTracing--1.x-inside-blue.svg
 [community-badge]: https://img.shields.io/badge/Project+Community-stats-blue.svg
 [community-stats]: https://all.devstats.cncf.io/d/54/project-health?orgId=1&var-repogroup_name=Jaeger
-[hotrod-tutorial]: https://medium.com/@YuriShkuro/take-opentracing-for-a-hotrod-ride-f6e3141f7941
+[hotrod-tutorial]: https://medium.com/jaegertracing/take-jaeger-for-a-hotrod-ride-233cf43e46c2
 [slack]: https://cloud-native.slack.com/archives/CGG7NFUJ3
 [slack-join]: https://slack.cncf.io
 [slack-img]: https://img.shields.io/badge/slack-join%20chat%20%E2%86%92-brightgreen?logo=slack

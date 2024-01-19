@@ -23,13 +23,13 @@ import (
 )
 
 var supportedMappings = map[string]struct{}{
-	"jaeger-span":    {},
-	"jaeger-service": {},
+	"jaeger-span":         {},
+	"jaeger-service":      {},
+	"jaeger-dependencies": {},
 }
 
 // GetMappingAsString returns rendered index templates as string
 func GetMappingAsString(builder es.TemplateBuilder, opt *app.Options) (string, error) {
-
 	enableILM, err := strconv.ParseBool(opt.UseILM)
 	if err != nil {
 		return "", err

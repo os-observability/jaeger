@@ -18,13 +18,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/ingester/app"
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/consumer"
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/processor"
 	kafkaConsumer "github.com/jaegertracing/jaeger/pkg/kafka/consumer"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
 	"github.com/jaegertracing/jaeger/plugin/storage/kafka"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
@@ -53,6 +53,7 @@ func CreateConsumer(logger *zap.Logger, metricsFactory metrics.Factory, spanWrit
 	consumerConfig := kafkaConsumer.Configuration{
 		Brokers:              options.Brokers,
 		Topic:                options.Topic,
+		InitialOffset:        options.InitialOffset,
 		GroupID:              options.GroupID,
 		ClientID:             options.ClientID,
 		ProtocolVersion:      options.ProtocolVersion,
@@ -64,7 +65,6 @@ func CreateConsumer(logger *zap.Logger, metricsFactory metrics.Factory, spanWrit
 	}
 
 	factoryParams := consumer.ProcessorFactoryParams{
-		Topic:          options.Topic,
 		Parallelism:    options.Parallelism,
 		SaramaConsumer: saramaConsumer,
 		BaseProcessor:  spanProcessor,

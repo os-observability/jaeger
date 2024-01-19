@@ -20,10 +20,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/jaeger-lib/metrics"
-	"github.com/uber/jaeger-lib/metrics/metricstest"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/cmd/ingester/app/processor/mocks"
+	"github.com/jaegertracing/jaeger/internal/metricstest"
+	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 )
 
 type fakeMsg struct{}
@@ -31,6 +33,7 @@ type fakeMsg struct{}
 func (fakeMsg) Value() []byte {
 	return nil
 }
+
 func TestNewRetryingProcessor(t *testing.T) {
 	mockProcessor := &mocks.SpanProcessor{}
 	msg := &fakeMsg{}
@@ -38,7 +41,7 @@ func TestNewRetryingProcessor(t *testing.T) {
 	lf := metricstest.NewFactory(0)
 	rp := NewRetryingProcessor(lf, mockProcessor)
 
-	assert.NoError(t, rp.Process(msg))
+	require.NoError(t, rp.Process(msg))
 
 	mockProcessor.AssertExpectations(t)
 	c, _ := lf.Snapshot()
@@ -55,11 +58,12 @@ func TestNewRetryingProcessorError(t *testing.T) {
 		MaxBackoffInterval(time.Second),
 		MaxAttempts(2),
 		PropagateError(true),
-		Rand(&fakeRand{})}
+		Rand(&fakeRand{}),
+	}
 	lf := metricstest.NewFactory(0)
 	rp := NewRetryingProcessor(lf, mockProcessor, opts...)
 
-	assert.Error(t, rp.Process(msg))
+	require.Error(t, rp.Process(msg))
 
 	mockProcessor.AssertNumberOfCalls(t, "Process", 3)
 	c, _ := lf.Snapshot()
@@ -76,12 +80,13 @@ func TestNewRetryingProcessorNoErrorPropagation(t *testing.T) {
 		MaxBackoffInterval(time.Second),
 		MaxAttempts(1),
 		PropagateError(false),
-		Rand(&fakeRand{})}
+		Rand(&fakeRand{}),
+	}
 
 	lf := metricstest.NewFactory(0)
 	rp := NewRetryingProcessor(lf, mockProcessor, opts...)
 
-	assert.NoError(t, rp.Process(msg))
+	require.NoError(t, rp.Process(msg))
 	mockProcessor.AssertNumberOfCalls(t, "Process", 2)
 	c, _ := lf.Snapshot()
 	assert.Equal(t, int64(1), c["span-processor.retry-exhausted"])
@@ -141,4 +146,8 @@ func Test_ProcessBackoff(t *testing.T) {
 			assert.Equal(t, tt.expectedInterval, rd.computeInterval(tt.attempt))
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc/proto/storageprototest"
 	"github.com/jaegertracing/jaeger/proto-gen/storage_v1"
 )
@@ -115,4 +116,8 @@ func makeSpan(someKV model.KeyValue) model.Span {
 			Tags:        model.KeyValues{someKV},
 		},
 	}
+}
+
+func TestMain(m *testing.M) {
+	testutils.VerifyGoLeaks(m)
 }
