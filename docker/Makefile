@@ -1,7 +1,7 @@
+# Copyright (c) 2024 The Jaeger Authors.
+# SPDX-License-Identifier: Apache-2.0
+
 VERSION := 1.0.0
-ROOT_IMAGE ?= alpine:3.16
-CERT_IMAGE := $(ROOT_IMAGE)
-GOLANG_IMAGE := golang:1.22-alpine
 
 DOCKER_REGISTRY ?= localhost:5000
 BASE_IMAGE ?= $(DOCKER_REGISTRY)/baseimg_alpine:latest
@@ -12,16 +12,18 @@ create-baseimg-debugimg: create-baseimg create-debugimg
 
 create-baseimg: prepare-docker-buildx
 	docker buildx build -t $(BASE_IMAGE) --push \
-		--build-arg root_image=$(ROOT_IMAGE) \
-		--build-arg cert_image=$(CERT_IMAGE) \
 		--platform=$(PLATFORMS) \
 		docker/base
 
 create-debugimg: prepare-docker-buildx
 	docker buildx build -t $(DEBUG_IMAGE) --push \
-		--build-arg golang_image=$(GOLANG_IMAGE) \
 		--platform=$(PLATFORMS) \
 		docker/debug
+
+create-fake-debugimg: prepare-docker-buildx
+	docker buildx build -t $(DEBUG_IMAGE) --push \
+		--platform=$(PLATFORMS) \
+		docker/base
 
 .PHONY: prepare-docker-buildx
 prepare-docker-buildx:

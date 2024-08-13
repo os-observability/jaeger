@@ -19,13 +19,15 @@ import (
 	"net"
 	"sync"
 
+	"go.opentelemetry.io/collector/component"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
-	"github.com/jaegertracing/jaeger/pkg/healthcheck"
+	"github.com/jaegertracing/jaeger/pkg/telemetery"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc/shared"
 	"github.com/jaegertracing/jaeger/storage"
@@ -35,32 +37,30 @@ import (
 
 // Server runs a gRPC server
 type Server struct {
-	logger      *zap.Logger
-	healthcheck *healthcheck.HealthCheck
-	opts        *Options
+	opts *Options
 
 	grpcConn   net.Listener
 	grpcServer *grpc.Server
 	wg         sync.WaitGroup
+	telemetery.Setting
 }
 
 // NewServer creates and initializes Server.
-func NewServer(options *Options, storageFactory storage.Factory, tm *tenancy.Manager, logger *zap.Logger, healthcheck *healthcheck.HealthCheck) (*Server, error) {
-	handler, err := createGRPCHandler(storageFactory, logger)
+func NewServer(options *Options, storageFactory storage.Factory, tm *tenancy.Manager, telset telemetery.Setting) (*Server, error) {
+	handler, err := createGRPCHandler(storageFactory, telset.Logger)
 	if err != nil {
 		return nil, err
 	}
 
-	grpcServer, err := createGRPCServer(options, tm, handler, logger)
+	grpcServer, err := createGRPCServer(options, tm, handler, telset.Logger)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Server{
-		logger:      logger,
-		healthcheck: healthcheck,
-		opts:        options,
-		grpcServer:  grpcServer,
+		opts:       options,
+		grpcServer: grpcServer,
+		Setting:    telset,
 	}, nil
 }
 
@@ -115,8 +115,9 @@ func createGRPCServer(opts *Options, tm *tenancy.Manager, handler *shared.GRPCHa
 	}
 
 	server := grpc.NewServer(grpcOpts...)
+	healthServer := health.NewServer()
 	reflection.Register(server)
-	handler.Register(server)
+	handler.Register(server, healthServer)
 
 	return server, nil
 }
@@ -127,15 +128,15 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-	s.logger.Info("Starting GRPC server", zap.Stringer("addr", listener.Addr()))
+	s.Logger.Info("Starting GRPC server", zap.Stringer("addr", listener.Addr()))
 	s.grpcConn = listener
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		if err := s.grpcServer.Serve(s.grpcConn); err != nil {
-			s.logger.Error("GRPC server exited", zap.Error(err))
+			s.Logger.Error("GRPC server exited", zap.Error(err))
+			s.ReportStatus(component.NewFatalErrorEvent(err))
 		}
-		s.healthcheck.Set(healthcheck.Unavailable)
 	}()
 
 	return nil
@@ -147,5 +148,6 @@ func (s *Server) Close() error {
 	s.grpcConn.Close()
 	s.opts.TLSGRPC.Close()
 	s.wg.Wait()
+	s.ReportStatus(component.NewStatusEvent(component.StatusStopped))
 	return nil
 }

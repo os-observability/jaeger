@@ -49,16 +49,16 @@ func (mb *MappingBuilder) GetMapping(mapping string) (string, error) {
 	} else if mb.EsVersion == 7 {
 		return mb.fixMapping(mapping + "-7.json")
 	}
-	return mb.fixMapping(mapping + ".json")
+	return mb.fixMapping(mapping + "-6.json")
 }
 
 // GetSpanServiceMappings returns span and service mappings
-func (mb *MappingBuilder) GetSpanServiceMappings() (string, string, error) {
-	spanMapping, err := mb.GetMapping("jaeger-span")
+func (mb *MappingBuilder) GetSpanServiceMappings() (spanMapping string, serviceMapping string, err error) {
+	spanMapping, err = mb.GetMapping("jaeger-span")
 	if err != nil {
 		return "", "", err
 	}
-	serviceMapping, err := mb.GetMapping("jaeger-service")
+	serviceMapping, err = mb.GetMapping("jaeger-service")
 	if err != nil {
 		return "", "", err
 	}

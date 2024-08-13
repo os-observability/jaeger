@@ -44,7 +44,7 @@ type test struct {
 	addresses []string
 }
 
-func (s *testServer) EmptyCall(ctx context.Context, in *grpc_testing.Empty) (*grpc_testing.Empty, error) {
+func (*testServer) EmptyCall(context.Context, *grpc_testing.Empty /* in */) (*grpc_testing.Empty, error) {
 	return &grpc_testing.Empty{}, nil
 }
 
@@ -88,6 +88,9 @@ func makeSureConnectionsUp(t *testing.T, count int, testc grpc_testing.TestServi
 	for si := 0; si < count; si++ {
 		connected := false
 		for i := 0; i < 3000; i++ { // 3000 * 10ms = 30s
+			if i != 0 {
+				time.Sleep(time.Millisecond * 10)
+			}
 			_, err := testc.EmptyCall(context.Background(), &grpc_testing.Empty{}, grpc.Peer(&p))
 			if err != nil {
 				continue
@@ -98,7 +101,6 @@ func makeSureConnectionsUp(t *testing.T, count int, testc grpc_testing.TestServi
 				t.Logf("connected to peer #%d (%v) on iteration %d", si, p.Addr, i)
 				break
 			}
-			time.Sleep(time.Millisecond * 10)
 		}
 		assert.True(t, connected, "Connection #%d was still not up. Connections so far: %+v", si, addrs)
 	}

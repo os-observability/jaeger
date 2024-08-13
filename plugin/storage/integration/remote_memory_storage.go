@@ -4,17 +4,23 @@
 package integration
 
 import (
+	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/jaegertracing/jaeger/cmd/remote-storage/app"
 	"github.com/jaegertracing/jaeger/pkg/config"
 	"github.com/jaegertracing/jaeger/pkg/healthcheck"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/telemetery"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/plugin/storage"
 	"github.com/jaegertracing/jaeger/ports"
@@ -26,7 +32,7 @@ type RemoteMemoryStorage struct {
 }
 
 func StartNewRemoteMemoryStorage(t *testing.T) *RemoteMemoryStorage {
-	logger := zaptest.NewLogger(t, zaptest.Level(zap.DebugLevel))
+	logger := zaptest.NewLogger(t, zaptest.WrapOptions(zap.AddCaller()))
 	opts := &app.Options{
 		GRPCHostPort: ports.PortToHostPort(ports.RemoteStorageGRPC),
 		Tenancy: tenancy.Options{
@@ -42,9 +48,33 @@ func StartNewRemoteMemoryStorage(t *testing.T) *RemoteMemoryStorage {
 	require.NoError(t, storageFactory.Initialize(metrics.NullFactory, logger))
 
 	t.Logf("Starting in-process remote storage server on %s", opts.GRPCHostPort)
-	server, err := app.NewServer(opts, storageFactory, tm, logger, healthcheck.New())
+	telset := telemetery.Setting{
+		Logger:       logger,
+		ReportStatus: telemetery.HCAdapter(healthcheck.New()),
+	}
+	server, err := app.NewServer(opts, storageFactory, tm, telset)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
+
+	conn, err := grpc.NewClient(
+		opts.GRPCHostPort,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+	healthClient := grpc_health_v1.NewHealthClient(conn)
+	require.Eventually(t, func() bool {
+		req := &grpc_health_v1.HealthCheckRequest{}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+		defer cancel()
+		resp, err := healthClient.Check(ctx, req)
+		if err != nil {
+			t.Logf("remote storage server is not ready: err=%v", err)
+			return false
+		}
+		t.Logf("remote storage server status: %v", resp.Status)
+		return resp.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
+	}, 30*time.Second, time.Second, "failed to ensure remote storage server is ready")
 
 	return &RemoteMemoryStorage{
 		server:         server,

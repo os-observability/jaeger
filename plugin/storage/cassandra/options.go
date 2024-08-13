@@ -45,7 +45,7 @@ const (
 	suffixSocketKeepAlive    = ".socket-keep-alive"
 	suffixUsername           = ".username"
 	suffixPassword           = ".password"
-
+	suffixAuth               = ".basic.allowed-authenticators"
 	// common storage settings
 	suffixSpanStoreWriteCacheTTL = ".span-store-write-cache-ttl"
 	suffixIndexTagsBlacklist     = ".index.tag-blacklist"
@@ -59,8 +59,8 @@ const (
 // to bind them to command line flag and apply overlays, so that some configurations
 // (e.g. archive) may be underspecified and infer the rest of its parameters from primary.
 type Options struct {
-	Primary                namespaceConfig `mapstructure:",squash"`
-	others                 map[string]*namespaceConfig
+	Primary                NamespaceConfig `mapstructure:",squash"`
+	others                 map[string]*NamespaceConfig
 	SpanStoreWriteCacheTTL time.Duration `mapstructure:"span_store_write_cache_ttl"`
 	Index                  IndexConfig   `mapstructure:"index"`
 }
@@ -78,9 +78,8 @@ type IndexConfig struct {
 // the Servers field in config.Configuration is a list, which we cannot represent with flags.
 // This struct adds a plain string field that can be bound to flags and is then parsed when
 // preparing the actual config.Configuration.
-type namespaceConfig struct {
+type NamespaceConfig struct {
 	config.Configuration `mapstructure:",squash"`
-	servers              string
 	namespace            string
 	Enabled              bool `mapstructure:"-"`
 }
@@ -89,24 +88,17 @@ type namespaceConfig struct {
 func NewOptions(primaryNamespace string, otherNamespaces ...string) *Options {
 	// TODO all default values should be defined via cobra flags
 	options := &Options{
-		Primary: namespaceConfig{
-			Configuration: config.Configuration{
-				MaxRetryAttempts:   3,
-				Keyspace:           "jaeger_v1_test",
-				ProtoVersion:       4,
-				ConnectionsPerHost: 2,
-				ReconnectInterval:  60 * time.Second,
-			},
-			servers:   "127.0.0.1",
-			namespace: primaryNamespace,
-			Enabled:   true,
+		Primary: NamespaceConfig{
+			Configuration: config.DefaultConfiguration(),
+			namespace:     primaryNamespace,
+			Enabled:       true,
 		},
-		others:                 make(map[string]*namespaceConfig, len(otherNamespaces)),
+		others:                 make(map[string]*NamespaceConfig, len(otherNamespaces)),
 		SpanStoreWriteCacheTTL: time.Hour * 12,
 	}
 
 	for _, namespace := range otherNamespaces {
-		options.others[namespace] = &namespaceConfig{namespace: namespace}
+		options.others[namespace] = &NamespaceConfig{namespace: namespace}
 	}
 
 	return options
@@ -143,7 +135,7 @@ func (opt *Options) AddFlags(flagSet *flag.FlagSet) {
 		"Controls process tag indexing. Set to false to disable.")
 }
 
-func addFlags(flagSet *flag.FlagSet, nsConfig namespaceConfig) {
+func addFlags(flagSet *flag.FlagSet, nsConfig NamespaceConfig) {
 	tlsFlagsConfig := tlsFlagsConfig(nsConfig.namespace)
 	tlsFlagsConfig.AddFlags(flagSet)
 
@@ -175,7 +167,7 @@ func addFlags(flagSet *flag.FlagSet, nsConfig namespaceConfig) {
 		"Reconnect interval to retry connecting to downed hosts")
 	flagSet.String(
 		nsConfig.namespace+suffixServers,
-		nsConfig.servers,
+		strings.Join(nsConfig.Servers, ","),
 		"The comma-separated list of Cassandra servers")
 	flagSet.Int(
 		nsConfig.namespace+suffixPort,
@@ -213,6 +205,13 @@ func addFlags(flagSet *flag.FlagSet, nsConfig namespaceConfig) {
 		nsConfig.namespace+suffixPassword,
 		nsConfig.Authenticator.Basic.Password,
 		"Password for password authentication for Cassandra")
+	flagSet.String(
+		nsConfig.namespace+suffixAuth,
+		"",
+		"The comma-separated list of allowed password authenticators for Cassandra."+
+			"If none are specified, there is a default 'approved' list that is used "+
+			"(https://github.com/gocql/gocql/blob/34fdeebefcbf183ed7f916f931aa0586fdaa1b40/conn.go#L27). "+
+			"If a non-empty list is provided, only specified authenticators are allowed.")
 }
 
 // InitFromViper initializes Options with properties from viper
@@ -235,7 +234,7 @@ func tlsFlagsConfig(namespace string) tlscfg.ClientFlagsConfig {
 	}
 }
 
-func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
+func (cfg *NamespaceConfig) initFromViper(v *viper.Viper) {
 	tlsFlagsConfig := tlsFlagsConfig(cfg.namespace)
 	if cfg.namespace != primaryStorageConfig {
 		cfg.Enabled = v.GetBool(cfg.namespace + suffixEnabled)
@@ -245,7 +244,8 @@ func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
 	cfg.Timeout = v.GetDuration(cfg.namespace + suffixTimeout)
 	cfg.ConnectTimeout = v.GetDuration(cfg.namespace + suffixConnectTimeout)
 	cfg.ReconnectInterval = v.GetDuration(cfg.namespace + suffixReconnectInterval)
-	cfg.servers = stripWhiteSpace(v.GetString(cfg.namespace + suffixServers))
+	servers := stripWhiteSpace(v.GetString(cfg.namespace + suffixServers))
+	cfg.Servers = strings.Split(servers, ",")
 	cfg.Port = v.GetInt(cfg.namespace + suffixPort)
 	cfg.Keyspace = v.GetString(cfg.namespace + suffixKeyspace)
 	cfg.LocalDC = v.GetString(cfg.namespace + suffixDC)
@@ -254,6 +254,8 @@ func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
 	cfg.SocketKeepAlive = v.GetDuration(cfg.namespace + suffixSocketKeepAlive)
 	cfg.Authenticator.Basic.Username = v.GetString(cfg.namespace + suffixUsername)
 	cfg.Authenticator.Basic.Password = v.GetString(cfg.namespace + suffixPassword)
+	authentication := stripWhiteSpace(v.GetString(cfg.namespace + suffixAuth))
+	cfg.Authenticator.Basic.AllowedAuthenticators = strings.Split(authentication, ",")
 	cfg.DisableCompression = v.GetBool(cfg.namespace + suffixDisableCompression)
 	var err error
 	cfg.TLS, err = tlsFlagsConfig.InitFromViper(v)
@@ -265,7 +267,6 @@ func (cfg *namespaceConfig) initFromViper(v *viper.Viper) {
 
 // GetPrimary returns primary configuration.
 func (opt *Options) GetPrimary() *config.Configuration {
-	opt.Primary.Servers = strings.Split(opt.Primary.servers, ",")
 	return &opt.Primary.Configuration
 }
 
@@ -273,17 +274,16 @@ func (opt *Options) GetPrimary() *config.Configuration {
 func (opt *Options) Get(namespace string) *config.Configuration {
 	nsCfg, ok := opt.others[namespace]
 	if !ok {
-		nsCfg = &namespaceConfig{}
+		nsCfg = &NamespaceConfig{}
 		opt.others[namespace] = nsCfg
 	}
 	if !nsCfg.Enabled {
 		return nil
 	}
 	nsCfg.Configuration.ApplyDefaults(&opt.Primary.Configuration)
-	if nsCfg.servers == "" {
-		nsCfg.servers = opt.Primary.servers
+	if len(nsCfg.Servers) == 0 {
+		nsCfg.Servers = opt.Primary.Servers
 	}
-	nsCfg.Servers = strings.Split(nsCfg.servers, ",")
 	return &nsCfg.Configuration
 }
 

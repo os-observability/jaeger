@@ -23,7 +23,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/jaegertracing/jaeger/pkg/cassandra"
 	casMetrics "github.com/jaegertracing/jaeger/pkg/cassandra/metrics"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/otelsemconv"
 	"github.com/jaegertracing/jaeger/plugin/storage/cassandra/spanstore/dbmodel"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
@@ -142,13 +142,13 @@ func NewSpanReader(
 }
 
 // GetServices returns all services traced by Jaeger
-func (s *SpanReader) GetServices(ctx context.Context) ([]string, error) {
+func (s *SpanReader) GetServices(context.Context) ([]string, error) {
 	return s.serviceNamesReader()
 }
 
 // GetOperations returns all operations for a specific service traced by Jaeger
 func (s *SpanReader) GetOperations(
-	ctx context.Context,
+	_ context.Context,
 	query spanstore.OperationQueryParameters,
 ) ([]spanstore.Operation, error) {
 	return s.operationNamesReader(query)
@@ -164,7 +164,7 @@ func (s *SpanReader) readTrace(ctx context.Context, traceID dbmodel.TraceID) (*m
 	return trace, err
 }
 
-func (s *SpanReader) readTraceInSpan(ctx context.Context, traceID dbmodel.TraceID) (*model.Trace, error) {
+func (s *SpanReader) readTraceInSpan(_ context.Context, traceID dbmodel.TraceID) (*model.Trace, error) {
 	start := time.Now()
 	q := s.session.Query(querySpanByTraceID, traceID)
 	i := q.Iter()
@@ -430,8 +430,8 @@ func (s *SpanReader) executeQuery(span trace.Span, query cassandra.Query, tableM
 func (s *SpanReader) startSpanForQuery(ctx context.Context, name, query string) (context.Context, trace.Span) {
 	ctx, span := s.tracer.Start(ctx, name)
 	span.SetAttributes(
-		attribute.Key(semconv.DBStatementKey).String(query),
-		attribute.Key(semconv.DBSystemKey).String("cassandra"),
+		attribute.Key(otelsemconv.DBQueryTextKey).String(query),
+		attribute.Key(otelsemconv.DBSystemKey).String("cassandra"),
 		attribute.Key("component").String("gocql"),
 	)
 	return ctx, span

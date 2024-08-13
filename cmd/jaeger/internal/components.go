@@ -6,6 +6,7 @@ package internal
 import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/spanmetricsconnector"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/jaegerreceiver"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kafkareceiver"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver"
@@ -29,7 +30,9 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/exporters/storageexporter"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerquery"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage"
+	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/remotesampling"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/integration/storagecleaner"
+	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/processors/adaptivesampling"
 )
 
 type builders struct {
@@ -62,7 +65,7 @@ func (b builders) build() (otelcol.Factories, error) {
 		jaegerquery.NewFactory(),
 		jaegerstorage.NewFactory(),
 		storagecleaner.NewFactory(),
-		// TODO add adaptive sampling
+		remotesampling.NewFactory(),
 	)
 	if err != nil {
 		return otelcol.Factories{}, err
@@ -88,6 +91,7 @@ func (b builders) build() (otelcol.Factories, error) {
 		// add-ons
 		storageexporter.NewFactory(), // generic exporter to Jaeger v1 spanstore.SpanWriter
 		kafkaexporter.NewFactory(),
+		prometheusexporter.NewFactory(),
 		// elasticsearch.NewFactory(),
 	)
 	if err != nil {
@@ -99,7 +103,7 @@ func (b builders) build() (otelcol.Factories, error) {
 		batchprocessor.NewFactory(),
 		memorylimiterprocessor.NewFactory(),
 		// add-ons
-		// TODO add adaptive sampling
+		adaptivesampling.NewFactory(),
 	)
 	if err != nil {
 		return otelcol.Factories{}, err

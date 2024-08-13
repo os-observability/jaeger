@@ -60,13 +60,13 @@ func (f *Factory) AddFlags(flagSet *flag.FlagSet) {
 }
 
 // InitFromViper implements plugin.Configurable
-func (f *Factory) InitFromViper(v *viper.Viper, logger *zap.Logger) {
+func (f *Factory) InitFromViper(v *viper.Viper, _ *zap.Logger) {
 	f.options.InitFromViper(v)
-	f.Builder = &f.options.Config
+	f.configureFromOptions(f.options)
 }
 
-// InitFromOptions initializes factory from options.
-func (f *Factory) InitFromOptions(o Options) {
+// configureFromOptions initializes factory from options.
+func (f *Factory) configureFromOptions(o Options) {
 	f.options = o
 	f.Builder = &f.options.Config
 }
@@ -94,7 +94,7 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 }
 
 // CreateSpanReader implements storage.Factory
-func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
+func (*Factory) CreateSpanReader() (spanstore.Reader, error) {
 	return nil, errors.New("kafka storage is write-only")
 }
 
@@ -104,7 +104,7 @@ func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
 }
 
 // CreateDependencyReader implements storage.Factory
-func (f *Factory) CreateDependencyReader() (dependencystore.Reader, error) {
+func (*Factory) CreateDependencyReader() (dependencystore.Reader, error) {
 	return nil, errors.New("kafka storage is write-only")
 }
 

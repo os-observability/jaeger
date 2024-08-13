@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
@@ -99,7 +99,7 @@ func NewFactoryWithConfig(
 	logger *zap.Logger,
 ) (*Factory, error) {
 	f := NewFactory()
-	f.InitFromOptions(Options{Primary: cfg})
+	f.configureFromOptions(&Options{Primary: cfg})
 	err := f.Initialize(metricsFactory, logger)
 	if err != nil {
 		return nil, err
@@ -115,11 +115,12 @@ func (f *Factory) AddFlags(flagSet *flag.FlagSet) {
 // InitFromViper implements plugin.Configurable
 func (f *Factory) InitFromViper(v *viper.Viper, logger *zap.Logger) {
 	f.Options.InitFromViper(v, logger)
+	f.configureFromOptions(f.Options)
 }
 
 // InitFromOptions initializes Factory from supplied options
-func (f *Factory) InitFromOptions(opts Options) {
-	f.Options = &opts
+func (f *Factory) configureFromOptions(opts *Options) {
+	f.Options = opts
 }
 
 // Initialize implements storage.Factory
@@ -198,12 +199,12 @@ func (f *Factory) CreateDependencyReader() (dependencystore.Reader, error) {
 }
 
 // CreateSamplingStore implements storage.SamplingStoreFactory
-func (f *Factory) CreateSamplingStore(maxBuckets int) (samplingstore.Store, error) {
+func (f *Factory) CreateSamplingStore(int /* maxBuckets */) (samplingstore.Store, error) {
 	return badgerSampling.NewSamplingStore(f.store), nil
 }
 
 // CreateLock implements storage.SamplingStoreFactory
-func (f *Factory) CreateLock() (distributedlock.Lock, error) {
+func (*Factory) CreateLock() (distributedlock.Lock, error) {
 	return &lock{}, nil
 }
 
@@ -310,7 +311,7 @@ func (f *Factory) registerBadgerExpvarMetrics(metricsFactory metrics.Factory) {
 // This function is intended for testing purposes only and should not be used in production environments.
 // Calling Purge in production will result in permanent data loss.
 func (f *Factory) Purge(_ context.Context) error {
-	return f.store.Update(func(txn *badger.Txn) error {
+	return f.store.Update(func(_ *badger.Txn) error {
 		return f.store.DropAll()
 	})
 }

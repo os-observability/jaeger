@@ -10,6 +10,9 @@ JAEGER_V2_STORAGE_PKGS = ./cmd/jaeger/internal/integration
 DOCKER_NAMESPACE?=jaegertracing
 DOCKER_TAG?=latest
 
+# SRC_ROOT is the top of the source tree.
+SRC_ROOT := $(shell git rev-parse --show-toplevel)
+
 # TODO we can compartmentalize this Makefile better, by separting:
 #  - integration tests
 #  - all the binary building targets
@@ -32,11 +35,20 @@ ALL_SRC = $(shell find . -name '*.go' \
 				   -not -name 'mocks*' \
 				   -not -name '*.pb.go' \
 				   -not -path './vendor/*' \
+				   -not -path './internal/tools/*' \
 				   -not -path '*/mocks/*' \
 				   -not -path '*/*-gen/*' \
 				   -not -path '*/thrift-0.9.2/*' \
 				   -type f | \
 				sort)
+
+# All .sh or .py or Makefile or .mk files that should be auto-formatted and linted.
+SCRIPTS_SRC = $(shell find . \( -name '*.sh' -o -name '*.py' -o -name '*.mk' -o -name 'Makefile*' -o -name 'Dockerfile*' \) \
+						-not -path './.git/*' \
+						-not -path './idl/*' \
+						-not -path './jaeger-ui/*' \
+						-type f | \
+					sort)
 
 # ALL_PKGS is used with 'nocover' and 'goleak'
 ALL_PKGS = $(shell echo $(dir $(ALL_SRC)) | tr ' ' '\n' | sort -u)
@@ -59,13 +71,14 @@ GOTEST_QUIET=$(GO) test $(RACE)
 GOTEST=$(GOTEST_QUIET) -v
 COVEROUT=cover.out
 GOFMT=gofmt
-GOFUMPT=gofumpt
 FMT_LOG=.fmt.log
 IMPORT_LOG=.import.log
 COLORIZE ?= | $(SED) 's/PASS/✅ PASS/g' | $(SED) 's/FAIL/❌ FAIL/g' | $(SED) 's/SKIP/🔕 SKIP/g'
 
 GIT_SHA=$(shell git rev-parse HEAD)
-GIT_CLOSEST_TAG=$(shell git describe --abbrev=0 --tags)
+GIT_SHALLOW_CLONE := $(shell git rev-parse --is-shallow-repository)
+# Some of GitHub Actions workflows do a shallow checkout without tags. This avoids logging warnings from git.
+GIT_CLOSEST_TAG=$(shell if [ "$(GIT_SHALLOW_CLONE)" = "false" ]; then git describe --abbrev=0 --tags; else echo 0.0.0; fi)
 ifneq ($(GIT_CLOSEST_TAG),$(shell echo ${GIT_CLOSEST_TAG} | grep -E "$(semver_regex)"))
 	$(warning GIT_CLOSEST_TAG=$(GIT_CLOSEST_TAG) is not in the semver format $(semver_regex))
 endif
@@ -76,11 +89,10 @@ DATE=$(shell TZ=UTC0 git show --quiet --date='format-local:%Y-%m-%dT%H:%M:%SZ' -
 BUILD_INFO_IMPORT_PATH=$(JAEGER_IMPORT_PATH)/pkg/version
 BUILD_INFO=-ldflags "-X $(BUILD_INFO_IMPORT_PATH).commitSHA=$(GIT_SHA) -X $(BUILD_INFO_IMPORT_PATH).latestVersion=$(GIT_CLOSEST_TAG) -X $(BUILD_INFO_IMPORT_PATH).date=$(DATE)"
 
-MOCKERY=mockery
-GOVERSIONINFO=goversioninfo
 SYSOFILE=resource.syso
 
 # import other Makefiles after the variables are defined
+include Makefile.Tools.mk
 include docker/Makefile
 include Makefile.Protobuf.mk
 include Makefile.Thrift.mk
@@ -91,9 +103,15 @@ include Makefile.Crossdock.mk
 .PHONY: test-and-lint
 test-and-lint: test fmt lint
 
+.PHONY: echo-version
+echo-version:
+	@echo "$(GIT_CLOSEST_TAG)"
+
+.PHONY: echo-all-pkgs
 echo-all-pkgs:
 	@echo $(ALL_PKGS) | tr ' ' '\n' | sort
 
+.PHONY: echo-all-srcs
 echo-all-srcs:
 	@echo $(ALL_SRC) | tr ' ' '\n' | sort
 
@@ -139,7 +157,6 @@ badger-storage-integration-test:
 
 .PHONY: grpc-storage-integration-test
 grpc-storage-integration-test:
-	(cd examples/memstore-plugin/ && go build .)
 	STORAGE=grpc $(MAKE) storage-integration-test
 
 # this test assumes STORAGE environment variable is set to elasticsearch|opensearch
@@ -168,7 +185,7 @@ goleak:
 	@scripts/check-goleak-files.sh $(ALL_PKGS)
 
 .PHONY: fmt
-fmt:
+fmt: $(GOFUMPT)
 	@echo Running import-order-cleanup on ALL_SRC ...
 	@./scripts/import-order-cleanup.py -o inplace -t $(ALL_SRC)
 	@echo Running gofmt on ALL_SRC ...
@@ -176,16 +193,16 @@ fmt:
 	@echo Running gofumpt on ALL_SRC ...
 	@$(GOFUMPT) -e -l -w $(ALL_SRC)
 	@echo Running updateLicense.py on ALL_SRC ...
-	@./scripts/updateLicense.py $(ALL_SRC)
+	@./scripts/updateLicense.py $(ALL_SRC) $(SCRIPTS_SRC)
 
 .PHONY: lint
-lint: goleak
-	golangci-lint -v run
-	@./scripts/updateLicense.py $(ALL_SRC) > $(FMT_LOG)
+lint: $(LINT) goleak
+	@./scripts/updateLicense.py $(ALL_SRC) $(SCRIPTS_SRC) > $(FMT_LOG)
 	@./scripts/import-order-cleanup.py -o stdout -t $(ALL_SRC) > $(IMPORT_LOG)
 	@[ ! -s "$(FMT_LOG)" -a ! -s "$(IMPORT_LOG)" ] || (echo "License check or import ordering failures, run 'make fmt'" | cat - $(FMT_LOG) $(IMPORT_LOG) && false)
 	./scripts/check-semconv-version.sh
 	./scripts/check-go-version.sh
+	$(LINT) -v run
 
 .PHONY: build-examples
 build-examples:
@@ -349,7 +366,10 @@ _prepare-winres-helper:
 	echo $$VERSIONINFO | $(GOVERSIONINFO) -o="$(PKGPATH)/$(SYSOFILE)" -
 
 .PHONY: build-binaries-linux
-build-binaries-linux:
+build-binaries-linux: build-binaries-amd64
+
+.PHONY: build-binaries-amd64
+build-binaries-amd64:
 	GOOS=linux GOARCH=amd64 $(MAKE) _build-platform-binaries
 
 .PHONY: build-binaries-windows
@@ -445,22 +465,6 @@ changelog:
 draft-release:
 	./scripts/draft-release.py
 
-.PHONY: install-test-tools
-install-test-tools:
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
-	$(GO) install mvdan.cc/gofumpt@latest
-
-.PHONY: install-build-tools
-install-build-tools:
-	$(GO) install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.4.0
-
-.PHONY: install-tools
-install-tools: install-test-tools install-build-tools
-	$(GO) install github.com/vektra/mockery/v2@v2.42.3
-
-.PHONY: install-ci
-install-ci: install-test-tools install-build-tools
-
 .PHONY: test-ci
 test-ci: GOTEST := $(GOTEST_QUIET)
 test-ci: build-examples cover
@@ -469,15 +473,10 @@ test-ci: build-examples cover
 init-submodules:
 	git submodule update --init --recursive
 
+MOCKERY_FLAGS := --all --disable-version-string
 .PHONY: generate-mocks
-generate-mocks: install-tools
-	$(MOCKERY) --all --dir ./pkg/es/ --output ./pkg/es/mocks && rm pkg/es/mocks/ClientBuilder.go
-	$(MOCKERY) --all --dir ./storage/spanstore/ --output ./storage/spanstore/mocks
-	$(MOCKERY) --all --dir ./proto-gen/storage_v1/ --output ./proto-gen/storage_v1/mocks
-
-.PHONY: echo-version
-echo-version:
-	@echo $(GIT_CLOSEST_TAG)
+generate-mocks: $(MOCKERY)
+	$(MOCKERY)
 
 .PHONY: certs
 certs:

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Copyright (c) 2024 The Jaeger Authors.
+# SPDX-License-Identifier: Apache-2.0
+
 version_regex='[0-9]\.[0-9][0-9]'
 update=false
 verbose=false
@@ -69,8 +72,9 @@ function check() {
 }
 
 check go.mod "^go\s\+$version_regex" "$go_previous_version"
+check internal/tools/go.mod "^go\s\+$version_regex" "$go_latest_version"
 
-check docker/Makefile "^.*golang:$version_regex" "$go_latest_version"
+check docker/debug/Dockerfile "^.*golang:$version_regex" "$go_latest_version"
 
 IFS='|' read -r -a gha_workflows <<< "$(grep -rl go-version .github | tr '\n' '|')"
 for gha_workflow in "${gha_workflows[@]}"; do

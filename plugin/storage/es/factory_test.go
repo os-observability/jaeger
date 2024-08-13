@@ -57,7 +57,7 @@ type mockClientBuilder struct {
 	createTemplateError error
 }
 
-func (m *mockClientBuilder) NewClient(_ *escfg.Configuration, logger *zap.Logger, metricsFactory metrics.Factory) (es.Client, error) {
+func (m *mockClientBuilder) NewClient(*escfg.Configuration, *zap.Logger, metrics.Factory) (es.Client, error) {
 	if m.err == nil {
 		c := &mocks.Client{}
 		tService := &mocks.TemplateCreateService{}
@@ -253,6 +253,7 @@ func TestArchiveEnabled(t *testing.T) {
 	f.newClientFn = (&mockClientBuilder{}).NewClient
 	err := f.Initialize(metrics.NullFactory, zap.NewNop())
 	require.NoError(t, err)
+	defer f.Close() // Ensure resources are cleaned up if initialization is successful
 	w, err := f.CreateArchiveSpanWriter()
 	require.NoError(t, err)
 	assert.NotNil(t, w)
@@ -261,19 +262,19 @@ func TestArchiveEnabled(t *testing.T) {
 	assert.NotNil(t, r)
 }
 
-func TestInitFromOptions(t *testing.T) {
+func TestConfigureFromOptions(t *testing.T) {
 	f := NewFactory()
-	o := Options{
+	o := &Options{
 		Primary: namespaceConfig{Configuration: escfg.Configuration{Servers: []string{"server"}}},
 		others:  map[string]*namespaceConfig{"es-archive": {Configuration: escfg.Configuration{Servers: []string{"server2"}}}},
 	}
-	f.InitFromOptions(o)
+	f.configureFromOptions(o)
 	assert.Equal(t, o.GetPrimary(), f.primaryConfig)
 	assert.Equal(t, o.Get(archiveNamespace), f.archiveConfig)
 }
 
 func TestESStorageFactoryWithConfig(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write(mockEsServerResponse)
 	}))
 	defer server.Close()
@@ -445,7 +446,7 @@ func TestFactoryESClientsAreNil(t *testing.T) {
 
 func TestPasswordFromFileErrors(t *testing.T) {
 	defer testutils.VerifyGoLeaksOnce(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write(mockEsServerResponse)
 	}))
 	defer server.Close()

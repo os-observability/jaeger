@@ -1,4 +1,7 @@
-FROM cassandra:4.1
+# Copyright (c) 2024 The Jaeger Authors.
+# SPDX-License-Identifier: Apache-2.0
+
+FROM cassandra:5.0
 
 COPY schema/* /cassandra-schema/
 

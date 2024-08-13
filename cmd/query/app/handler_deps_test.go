@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jaegertracing/jaeger/model"
@@ -309,17 +310,20 @@ func TestFilterDependencies(t *testing.T) {
 }
 
 func TestGetDependenciesSuccess(t *testing.T) {
-	ts := initializeTestServer()
-	defer ts.server.Close()
+	ts := initializeTestServer(t)
 	expectedDependencies := []model.DependencyLink{{Parent: "killer", Child: "queen", CallCount: 12}}
 	endTs := time.Unix(0, 1476374248550*millisToNanosMultiplier)
-	ts.dependencyReader.On("GetDependencies", endTs, defaultDependencyLookbackDuration).Return(expectedDependencies, nil).Times(1)
+	ts.dependencyReader.On("GetDependencies",
+		mock.Anything, // context
+		endTs,
+		defaultDependencyLookbackDuration,
+	).Return(expectedDependencies, nil).Times(1)
 
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=1476374248550&service=queen", &response)
 	assert.NotEmpty(t, response.Data)
-	data := response.Data.([]interface{})[0]
-	actual := data.(map[string]interface{})
+	data := response.Data.([]any)[0]
+	actual := data.(map[string]any)
 	assert.Equal(t, "killer", actual["parent"])
 	assert.Equal(t, "queen", actual["child"])
 	assert.Equal(t, 12.00, actual["callCount"]) // recovered type is float
@@ -327,10 +331,12 @@ func TestGetDependenciesSuccess(t *testing.T) {
 }
 
 func TestGetDependenciesCassandraFailure(t *testing.T) {
-	ts := initializeTestServer()
-	defer ts.server.Close()
+	ts := initializeTestServer(t)
 	endTs := time.Unix(0, 1476374248550*millisToNanosMultiplier)
-	ts.dependencyReader.On("GetDependencies", endTs, defaultDependencyLookbackDuration).Return(nil, errStorage).Times(1)
+	ts.dependencyReader.On("GetDependencies",
+		mock.Anything, // context
+		endTs,
+		defaultDependencyLookbackDuration).Return(nil, errStorage).Times(1)
 
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=1476374248550&service=testing", &response)
@@ -338,18 +344,14 @@ func TestGetDependenciesCassandraFailure(t *testing.T) {
 }
 
 func TestGetDependenciesEndTimeParsingFailure(t *testing.T) {
-	ts := initializeTestServer()
-	defer ts.server.Close()
-
+	ts := initializeTestServer(t)
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=shazbot&service=testing", &response)
 	require.Error(t, err)
 }
 
 func TestGetDependenciesLookbackParsingFailure(t *testing.T) {
-	ts := initializeTestServer()
-	defer ts.server.Close()
-
+	ts := initializeTestServer(t)
 	var response structuredResponse
 	err := getJSON(ts.server.URL+"/api/dependencies?endTs=1476374248550&service=testing&lookback=shazbot", &response)
 	require.Error(t, err)

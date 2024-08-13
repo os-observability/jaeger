@@ -31,14 +31,14 @@ import (
 // Configuration describes the configuration properties needed to connect to a Cassandra cluster
 type Configuration struct {
 	Servers              []string       `valid:"required,url" mapstructure:"servers"`
-	Keyspace             string         `valid:"nonzero" mapstructure:"keyspace"`
+	Keyspace             string         `mapstructure:"keyspace"`
 	LocalDC              string         `mapstructure:"local_dc"`
-	ConnectionsPerHost   int            `valid:"min=1" mapstructure:"connections_per_host"`
-	Timeout              time.Duration  `valid:"min=500" mapstructure:"-"`
+	ConnectionsPerHost   int            `mapstructure:"connections_per_host"`
+	Timeout              time.Duration  `mapstructure:"-"`
 	ConnectTimeout       time.Duration  `mapstructure:"connection_timeout"`
-	ReconnectInterval    time.Duration  `valid:"min=500" mapstructure:"reconnect_interval"`
-	SocketKeepAlive      time.Duration  `valid:"min=0" mapstructure:"socket_keep_alive"`
-	MaxRetryAttempts     int            `valid:"min=0" mapstructure:"max_retry_attempts"`
+	ReconnectInterval    time.Duration  `mapstructure:"reconnect_interval"`
+	SocketKeepAlive      time.Duration  `mapstructure:"socket_keep_alive"`
+	MaxRetryAttempts     int            `mapstructure:"max_retry_attempts"`
 	ProtoVersion         int            `mapstructure:"proto_version"`
 	Consistency          string         `mapstructure:"consistency"`
 	DisableCompression   bool           `mapstructure:"disable_compression"`
@@ -46,6 +46,18 @@ type Configuration struct {
 	Authenticator        Authenticator  `mapstructure:",squash"`
 	DisableAutoDiscovery bool           `mapstructure:"-"`
 	TLS                  tlscfg.Options `mapstructure:"tls"`
+}
+
+func DefaultConfiguration() Configuration {
+	return Configuration{
+		Servers:            []string{"127.0.0.1"},
+		Port:               9042,
+		MaxRetryAttempts:   3,
+		Keyspace:           "jaeger_v1_test",
+		ProtoVersion:       4,
+		ConnectionsPerHost: 2,
+		ReconnectInterval:  60 * time.Second,
+	}
 }
 
 // Authenticator holds the authentication properties needed to connect to a Cassandra cluster
@@ -56,8 +68,9 @@ type Authenticator struct {
 
 // BasicAuthenticator holds the username and password for a password authenticator for a Cassandra cluster
 type BasicAuthenticator struct {
-	Username string `yaml:"username" mapstructure:"username"`
-	Password string `yaml:"password" mapstructure:"password" json:"-"`
+	Username              string   `yaml:"username" mapstructure:"username"`
+	Password              string   `yaml:"password" mapstructure:"password" json:"-"`
+	AllowedAuthenticators []string `yaml:"allowed_authenticators" mapstructure:"allowed_authenticators"`
 }
 
 // ApplyDefaults copies settings from source unless its own value is non-zero.
@@ -143,8 +156,9 @@ func (c *Configuration) NewCluster(logger *zap.Logger) (*gocql.ClusterConfig, er
 
 	if c.Authenticator.Basic.Username != "" && c.Authenticator.Basic.Password != "" {
 		cluster.Authenticator = gocql.PasswordAuthenticator{
-			Username: c.Authenticator.Basic.Username,
-			Password: c.Authenticator.Basic.Password,
+			Username:              c.Authenticator.Basic.Username,
+			Password:              c.Authenticator.Basic.Password,
+			AllowedAuthenticators: c.Authenticator.Basic.AllowedAuthenticators,
 		}
 	}
 	tlsCfg, err := c.TLS.Config(logger)

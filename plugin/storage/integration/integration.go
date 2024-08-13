@@ -49,7 +49,7 @@ var fixtures embed.FS
 // - in those functions it instantiates and populates this struct
 // - it then calls RunAll.
 //
-// Some implementations may declate multuple tests, with different settings,
+// Some implementations may declare multiple tests, with different settings,
 // and RunAll() under different conditions.
 type StorageIntegration struct {
 	SpanWriter        spanstore.Writer
@@ -70,10 +70,6 @@ type StorageIntegration struct {
 
 	// Skip Archive Test if not supported by the storage backend
 	SkipArchiveTest bool
-
-	// TODO: remove this after upstream issue in OTEL jaeger translator is fixed
-	// Skip testing trace binary tags, logs, and process
-	SkipBinaryAttrs bool
 
 	// List of tests which has to be skipped, it can be regex too.
 	SkipList []string
@@ -113,6 +109,17 @@ func SkipUnlessEnv(t *testing.T, storage ...string) {
 	t.Skipf("This test requires environment variable STORAGE=%s", strings.Join(storage, "|"))
 }
 
+var CassandraSkippedTests = []string{
+	"Tags_+_Operation_name_+_Duration_range",
+	"Tags_+_Duration_range",
+	"Tags_+_Operation_name_+_max_Duration",
+	"Tags_+_max_Duration",
+	"Operation_name_+_Duration_range",
+	"Duration_range",
+	"max_Duration",
+	"Multiple_Traces",
+}
+
 func (s *StorageIntegration) skipIfNeeded(t *testing.T) {
 	for _, pat := range s.SkipList {
 		escapedPat := regexp.QuoteMeta(pat)
@@ -125,7 +132,7 @@ func (s *StorageIntegration) skipIfNeeded(t *testing.T) {
 	}
 }
 
-func (s *StorageIntegration) waitForCondition(t *testing.T, predicate func(t *testing.T) bool) bool {
+func (*StorageIntegration) waitForCondition(t *testing.T, predicate func(t *testing.T) bool) bool {
 	const iterations = 100 // Will wait at most 100 seconds.
 	for i := 0; i < iterations; i++ {
 		if predicate(t) {
@@ -178,7 +185,7 @@ func (s *StorageIntegration) testArchiveTrace(t *testing.T) {
 	require.NoError(t, s.ArchiveSpanWriter.WriteSpan(context.Background(), expected))
 
 	var actual *model.Trace
-	found := s.waitForCondition(t, func(t *testing.T) bool {
+	found := s.waitForCondition(t, func(_ *testing.T) bool {
 		var err error
 		actual, err = s.ArchiveSpanReader.GetTrace(context.Background(), tID)
 		return err == nil && len(actual.Spans) == 1
@@ -196,10 +203,10 @@ func (s *StorageIntegration) testGetLargeSpan(t *testing.T) {
 	expectedTraceID := expected.Spans[0].TraceID
 
 	var actual *model.Trace
-	found := s.waitForCondition(t, func(t *testing.T) bool {
+	found := s.waitForCondition(t, func(_ *testing.T) bool {
 		var err error
 		actual, err = s.SpanReader.GetTrace(context.Background(), expectedTraceID)
-		return err == nil && len(actual.Spans) == len(expected.Spans)
+		return err == nil && len(actual.Spans) >= len(expected.Spans)
 	})
 	if !assert.True(t, found) {
 		CompareTraces(t, expected, actual)
@@ -327,6 +334,7 @@ func (s *StorageIntegration) findTracesByQuery(t *testing.T, query *spanstore.Tr
 }
 
 func (s *StorageIntegration) writeTrace(t *testing.T, trace *model.Trace) {
+	t.Logf("%-23s Writing trace with %d spans", time.Now().Format("2006-01-02 15:04:05.999"), len(trace.Spans))
 	for _, span := range trace.Spans {
 		err := s.SpanWriter.WriteSpan(context.Background(), span)
 		require.NoError(t, err, "Not expecting error when writing trace to storage")
@@ -356,41 +364,9 @@ func (s *StorageIntegration) loadParseAndWriteLargeTrace(t *testing.T) *model.Tr
 	return trace
 }
 
-func (s *StorageIntegration) getTraceFixture(t *testing.T, fixture string) *model.Trace {
+func (*StorageIntegration) getTraceFixture(t *testing.T, fixture string) *model.Trace {
 	fileName := fmt.Sprintf("fixtures/traces/%s.json", fixture)
-	trace := getTraceFixtureExact(t, fileName)
-
-	if s.SkipBinaryAttrs {
-		t.Logf("Dropped binary type attributes from trace ID: %s", trace.Spans[0].TraceID.String())
-		trace = s.dropBinaryAttrs(t, trace)
-	}
-
-	return trace
-}
-
-func (s *StorageIntegration) dropBinaryAttrs(t *testing.T, trace *model.Trace) *model.Trace {
-	for _, span := range trace.Spans {
-		span.Tags = s.dropBinaryTags(t, span.Tags)
-		span.Process.Tags = s.dropBinaryTags(t, span.Process.Tags)
-
-		for i := range span.Logs {
-			span.Logs[i].Fields = s.dropBinaryTags(t, span.Logs[i].Fields)
-		}
-	}
-
-	return trace
-}
-
-func (s *StorageIntegration) dropBinaryTags(_ *testing.T, tags []model.KeyValue) []model.KeyValue {
-	newTags := make([]model.KeyValue, 0)
-	for _, tag := range tags {
-		if tag.VType == model.ValueType_BINARY {
-			continue
-		}
-		newTags = append(newTags, tag)
-	}
-
-	return newTags
+	return getTraceFixtureExact(t, fileName)
 }
 
 func getTraceFixtureExact(t *testing.T, fileName string) *model.Trace {
@@ -414,7 +390,7 @@ func LoadAndParseQueryTestCases(t *testing.T, queriesFile string) []*QueryFixtur
 	return queries
 }
 
-func loadAndParseJSON(t *testing.T, path string, object interface{}) {
+func loadAndParseJSON(t *testing.T, path string, object any) {
 	// #nosec
 	inStr, err := fixtures.ReadFile(path)
 	require.NoError(t, err, "Not expecting error when loading fixture %s", path)

@@ -109,6 +109,17 @@ func (h *HTTPHandler) RegisterRoutes(router *mux.Router) {
 	}).Methods(http.MethodGet)
 }
 
+// RegisterRoutes registers configuration handlers with HTTP Router.
+func (h *HTTPHandler) RegisterRoutesWithHTTP(router *http.ServeMux) {
+	prefix := h.params.BasePath
+	router.HandleFunc(
+		prefix+"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			h.serveSamplingHTTP(w, r, h.encodeThriftLegacy)
+		},
+	)
+}
+
 func (h *HTTPHandler) serviceFromRequest(w http.ResponseWriter, r *http.Request) (string, error) {
 	services := r.URL.Query()["service"]
 	if len(services) != 1 {
@@ -213,7 +224,7 @@ var samplingStrategyTypes = []api_v2.SamplingStrategyType{
 //
 // Thrift 0.9.3 classes generate this JSON:
 // {"strategyType":"PROBABILISTIC","probabilisticSampling":{"samplingRate":0.5}}
-func (h *HTTPHandler) encodeThriftEnums092(json []byte) []byte {
+func (*HTTPHandler) encodeThriftEnums092(json []byte) []byte {
 	str := string(json)
 	for _, strategyType := range samplingStrategyTypes {
 		str = strings.Replace(

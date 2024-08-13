@@ -1,0 +1,49 @@
+name: CIT Kafka
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event.pull_request && github.event.pull_request.number) || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+# See https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions
+permissions:  # added using https://github.com/step-security/secure-workflows
+  contents: read
+
+jobs:
+  kafka:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        jaeger-version: [v1, v2]  # Adjust if there are specific versions of Jaeger
+    name: Kafka Integration Tests ${{ matrix.jaeger-version }}
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@0d381219ddf674d61a7572ddd19d7941e271515c # v2.9.0
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+    - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+      with:
+        go-version: 1.22.x
+
+    - name: Run Kafka integration tests
+      id: test-execution
+      run: bash scripts/kafka-integration-test.sh -j ${{ matrix.jaeger-version }}
+
+    - name: Output Kafka logs on failure
+      run: docker compose -f ${{ steps.test-execution.outputs.docker_compose_file }} logs
+      if: ${{ failure() }}
+
+    - name: Upload coverage to codecov
+      uses: ./.github/actions/upload-codecov
+      with:
+        files: cover.out
+        flags: kafka-${{ matrix.jaeger-version }}

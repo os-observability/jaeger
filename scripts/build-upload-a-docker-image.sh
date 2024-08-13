@@ -1,6 +1,9 @@
 #!/bin/bash
 
-set -exu
+# Copyright (c) 2024 The Jaeger Authors.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euf -o pipefail
 
 base_debug_img_arg=""
 docker_file_arg="Dockerfile"
@@ -35,6 +38,8 @@ while getopts "lbc:d:f:p:t:" opt; do
 		;;
 	esac
 done
+
+set -x
 
 if [ -n "${target_arg}" ]; then
     target_arg="--target ${target_arg}"

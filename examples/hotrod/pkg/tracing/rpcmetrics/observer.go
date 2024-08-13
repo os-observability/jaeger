@@ -22,10 +22,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/otelsemconv"
 )
 
 const defaultMaxNumberOfEndpoints = 200
@@ -48,7 +48,7 @@ func NewObserver(metricsFactory metrics.Factory, normalizer NameNormalizer) *Obs
 	}
 }
 
-func (o *Observer) OnStart(parent context.Context, s sdktrace.ReadWriteSpan) {}
+func (*Observer) OnStart(context.Context /* parent */, sdktrace.ReadWriteSpan) {}
 
 func (o *Observer) OnEnd(sp sdktrace.ReadOnlySpan) {
 	operationName := sp.Name()
@@ -70,7 +70,7 @@ func (o *Observer) OnEnd(sp sdktrace.ReadOnlySpan) {
 		mets.RequestLatencySuccess.Record(latency)
 	}
 	for _, attr := range sp.Attributes() {
-		if string(attr.Key) == string(semconv.HTTPResponseStatusCodeKey) {
+		if string(attr.Key) == string(otelsemconv.HTTPResponseStatusCodeKey) {
 			if attr.Value.Type() == attribute.INT64 {
 				mets.recordHTTPStatusCode(attr.Value.AsInt64())
 			} else if attr.Value.Type() == attribute.STRING {
@@ -83,10 +83,10 @@ func (o *Observer) OnEnd(sp sdktrace.ReadOnlySpan) {
 	}
 }
 
-func (o *Observer) Shutdown(ctx context.Context) error {
+func (*Observer) Shutdown(context.Context) error {
 	return nil
 }
 
-func (o *Observer) ForceFlush(ctx context.Context) error {
+func (*Observer) ForceFlush(context.Context) error {
 	return nil
 }

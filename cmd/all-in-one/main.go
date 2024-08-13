@@ -40,15 +40,14 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/internal/status"
 	queryApp "github.com/jaegertracing/jaeger/cmd/query/app"
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
-	"github.com/jaegertracing/jaeger/internal/metrics/expvar"
-	"github.com/jaegertracing/jaeger/internal/metrics/fork"
 	"github.com/jaegertracing/jaeger/pkg/config"
 	"github.com/jaegertracing/jaeger/pkg/jtracer"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/pkg/telemetery"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/pkg/version"
 	metricsPlugin "github.com/jaegertracing/jaeger/plugin/metrics"
-	ss "github.com/jaegertracing/jaeger/plugin/sampling/strategystore"
+	ss "github.com/jaegertracing/jaeger/plugin/sampling/strategyprovider"
 	"github.com/jaegertracing/jaeger/plugin/storage"
 	"github.com/jaegertracing/jaeger/ports"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
@@ -70,13 +69,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Cannot initialize storage factory: %v", err)
 	}
-	strategyStoreFactoryConfig, err := ss.FactoryConfigFromEnv()
+	samplingStrategyFactoryConfig, err := ss.FactoryConfigFromEnv()
 	if err != nil {
-		log.Fatalf("Cannot initialize sampling strategy store factory config: %v", err)
+		log.Fatalf("Cannot initialize sampling strategy factory config: %v", err)
 	}
-	strategyStoreFactory, err := ss.NewFactory(*strategyStoreFactoryConfig)
+	samplingStrategyFactory, err := ss.NewFactory(*samplingStrategyFactoryConfig)
 	if err != nil {
-		log.Fatalf("Cannot initialize sampling strategy store factory: %v", err)
+		log.Fatalf("Cannot initialize sampling strategy factory: %v", err)
 	}
 
 	fc := metricsPlugin.FactoryConfigFromEnv()
@@ -91,14 +90,12 @@ func main() {
 		Short: "Jaeger all-in-one distribution with agent, collector and query in one process.",
 		Long: `Jaeger all-in-one distribution with agent, collector and query. Use with caution this version
 by default uses only in-memory database.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ /* args */ []string) error {
 			if err := svc.Start(v); err != nil {
 				return err
 			}
 			logger := svc.Logger // shortcut
-			baseFactory := fork.New("internal",
-				expvar.NewFactory(10), // backend for internal opts
-				svc.MetricsFactory.Namespace(metrics.NSOptions{Name: "jaeger"}))
+			baseFactory := svc.MetricsFactory.Namespace(metrics.NSOptions{Name: "jaeger"})
 			version.NewInfoMetrics(baseFactory)
 			agentMetricsFactory := baseFactory.Namespace(metrics.NSOptions{Name: "agent"})
 			collectorMetricsFactory := baseFactory.Namespace(metrics.NSOptions{Name: "collector"})
@@ -137,13 +134,13 @@ by default uses only in-memory database.`,
 				logger.Fatal("Failed to create sampling store factory", zap.Error(err))
 			}
 
-			strategyStoreFactory.InitFromViper(v, logger)
-			if err := strategyStoreFactory.Initialize(collectorMetricsFactory, ssFactory, logger); err != nil {
-				logger.Fatal("Failed to init sampling strategy store factory", zap.Error(err))
+			samplingStrategyFactory.InitFromViper(v, logger)
+			if err := samplingStrategyFactory.Initialize(collectorMetricsFactory, ssFactory, logger); err != nil {
+				logger.Fatal("Failed to init sampling strategy factory", zap.Error(err))
 			}
-			strategyStore, aggregator, err := strategyStoreFactory.CreateStrategyStore()
+			samplingProvider, samplingAggregator, err := samplingStrategyFactory.CreateStrategyProvider()
 			if err != nil {
-				logger.Fatal("Failed to create sampling strategy store", zap.Error(err))
+				logger.Fatal("Failed to create sampling strategy provider", zap.Error(err))
 			}
 
 			aOpts := new(agentApp.Builder).InitFromViper(v)
@@ -165,14 +162,14 @@ by default uses only in-memory database.`,
 
 			// collector
 			c := collectorApp.New(&collectorApp.CollectorParams{
-				ServiceName:    "jaeger-collector",
-				Logger:         logger,
-				MetricsFactory: collectorMetricsFactory,
-				SpanWriter:     spanWriter,
-				StrategyStore:  strategyStore,
-				Aggregator:     aggregator,
-				HealthCheck:    svc.HC(),
-				TenancyMgr:     tm,
+				ServiceName:        "jaeger-collector",
+				Logger:             logger,
+				MetricsFactory:     collectorMetricsFactory,
+				SpanWriter:         spanWriter,
+				SamplingProvider:   samplingProvider,
+				SamplingAggregator: samplingAggregator,
+				HealthCheck:        svc.HC(),
+				TenancyMgr:         tm,
 			})
 			if err := c.Start(cOpts); err != nil {
 				log.Fatal(err)
@@ -197,12 +194,17 @@ by default uses only in-memory database.`,
 				logger.Fatal("Could not create collector proxy", zap.Error(err))
 			}
 			agent := startAgent(cp, aOpts, logger, agentMetricsFactory)
-
+			telset := telemetery.Setting{
+				Logger:         svc.Logger,
+				TracerProvider: tracer.OTEL,
+				Metrics:        queryMetricsFactory,
+				ReportStatus:   telemetery.HCAdapter(svc.HC()),
+			}
 			// query
 			querySrv := startQuery(
 				svc, qOpts, qOpts.BuildQueryServiceOptions(storageFactory, logger),
 				spanReader, dependencyReader, metricsQueryService,
-				queryMetricsFactory, tm, tracer,
+				tm, telset,
 			)
 
 			svc.RunAndThen(func() {
@@ -242,7 +244,7 @@ by default uses only in-memory database.`,
 		agentGrpcRep.AddFlags,
 		collectorFlags.AddFlags,
 		queryApp.AddFlags,
-		strategyStoreFactory.AddFlags,
+		samplingStrategyFactory.AddFlags,
 		metricsReaderFactory.AddFlags,
 	)
 
@@ -277,13 +279,13 @@ func startQuery(
 	spanReader spanstore.Reader,
 	depReader dependencystore.Reader,
 	metricsQueryService querysvc.MetricsQueryService,
-	metricsFactory metrics.Factory,
 	tm *tenancy.Manager,
-	jt *jtracer.JTracer,
+	telset telemetery.Setting,
 ) *queryApp.Server {
-	spanReader = storageMetrics.NewReadMetricsDecorator(spanReader, metricsFactory)
+	spanReader = storageMetrics.NewReadMetricsDecorator(spanReader, telset.Metrics)
 	qs := querysvc.NewQueryService(spanReader, depReader, *queryOpts)
-	server, err := queryApp.NewServer(svc.Logger, svc.HC(), qs, metricsQueryService, qOpts, tm, jt)
+
+	server, err := queryApp.NewServer(qs, metricsQueryService, qOpts, tm, telset)
 	if err != nil {
 		svc.Logger.Fatal("Could not create jaeger-query", zap.Error(err))
 	}

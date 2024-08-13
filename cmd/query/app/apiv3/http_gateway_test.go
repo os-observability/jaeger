@@ -29,7 +29,7 @@ import (
 )
 
 func setupHTTPGatewayNoServer(
-	t *testing.T,
+	_ *testing.T,
 	basePath string,
 	tenancyOptions tenancy.Options,
 ) *testGateway {
@@ -46,7 +46,7 @@ func setupHTTPGatewayNoServer(
 		QueryService: q,
 		TenancyMgr:   tenancy.NewManager(&tenancyOptions),
 		Logger:       zap.NewNop(),
-		Tracer:       jtracer.NoOp(),
+		Tracer:       jtracer.NoOp().OTEL,
 	}
 
 	gw.router = &mux.Router{}
@@ -117,7 +117,7 @@ func TestHTTPGatewayOTLPError(t *testing.T) {
 	}
 	const simErr = "simulated error"
 	gw.returnSpansTestable(nil, w,
-		func(spans []*model.Span) (ptrace.Traces, error) {
+		func(_ []*model.Span) (ptrace.Traces, error) {
 			return ptrace.Traces{}, fmt.Errorf(simErr)
 		},
 	)

@@ -11,41 +11,82 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
-	"go.uber.org/zap"
 
-	cassandraCfg "github.com/jaegertracing/jaeger/pkg/cassandra/config"
-	esCfg "github.com/jaegertracing/jaeger/pkg/es/config"
-	memoryCfg "github.com/jaegertracing/jaeger/pkg/memory/config"
+	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage/factoryadapter"
+	"github.com/jaegertracing/jaeger/internal/metrics/otelmetrics"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
+	"github.com/jaegertracing/jaeger/plugin/metrics/prometheus"
 	"github.com/jaegertracing/jaeger/plugin/storage/badger"
-	badgerCfg "github.com/jaegertracing/jaeger/plugin/storage/badger"
 	"github.com/jaegertracing/jaeger/plugin/storage/cassandra"
 	"github.com/jaegertracing/jaeger/plugin/storage/es"
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc"
-	grpcCfg "github.com/jaegertracing/jaeger/plugin/storage/grpc/config"
 	"github.com/jaegertracing/jaeger/plugin/storage/memory"
 	"github.com/jaegertracing/jaeger/storage"
+	"github.com/jaegertracing/jaeger/storage_v2/spanstore"
 )
 
 var _ Extension = (*storageExt)(nil)
 
 type Extension interface {
 	extension.Extension
-	Factory(name string) (storage.Factory, bool)
+	TraceStorageFactory(name string) (storage.Factory, bool)
+	MetricStorageFactory(name string) (storage.MetricsFactory, bool)
 }
 
 type storageExt struct {
-	config    *Config
-	logger    *zap.Logger
-	factories map[string]storage.Factory
+	config           *Config
+	telset           component.TelemetrySettings
+	factories        map[string]storage.Factory
+	metricsFactories map[string]storage.MetricsFactory
 }
 
 // GetStorageFactory locates the extension in Host and retrieves a storage factory from it with the given name.
 func GetStorageFactory(name string, host component.Host) (storage.Factory, error) {
+	ext, err := findExtension(host)
+	if err != nil {
+		return nil, err
+	}
+	f, ok := ext.TraceStorageFactory(name)
+	if !ok {
+		return nil, fmt.Errorf(
+			"cannot find definition of storage '%s' in the configuration for extension '%s'",
+			name, componentType,
+		)
+	}
+	return f, nil
+}
+
+// GetMetricsFactory locates the extension in Host and retrieves a metrics factory from it with the given name.
+func GetMetricsFactory(name string, host component.Host) (storage.MetricsFactory, error) {
+	ext, err := findExtension(host)
+	if err != nil {
+		return nil, err
+	}
+	mf, ok := ext.MetricStorageFactory(name)
+	if !ok {
+		return nil, fmt.Errorf(
+			"cannot find metric storage '%s' declared by '%s' extension",
+			name, componentType,
+		)
+	}
+	return mf, nil
+}
+
+func GetStorageFactoryV2(name string, host component.Host) (spanstore.Factory, error) {
+	f, err := GetStorageFactory(name, host)
+	if err != nil {
+		return nil, err
+	}
+
+	return factoryadapter.NewFactory(f), nil
+}
+
+func findExtension(host component.Host) (Extension, error) {
+	var id component.ID
 	var comp component.Component
-	for id, ext := range host.GetExtensions() {
-		if id.Type() == componentType {
-			comp = ext
+	for i, ext := range host.GetExtensions() {
+		if i.Type() == componentType {
+			id, comp = i, ext
 			break
 		}
 	}
@@ -55,112 +96,67 @@ func GetStorageFactory(name string, host component.Host) (storage.Factory, error
 			componentType,
 		)
 	}
-	f, ok := comp.(Extension).Factory(name)
+	ext, ok := comp.(Extension)
 	if !ok {
-		return nil, fmt.Errorf(
-			"cannot find storage '%s' declared with '%s' extension",
-			name, componentType,
-		)
+		return nil, fmt.Errorf("extension '%s' is not of expected type '%s'", id, componentType)
 	}
-	return f, nil
+	return ext, nil
 }
 
-func newStorageExt(config *Config, otel component.TelemetrySettings) *storageExt {
+func newStorageExt(config *Config, telset component.TelemetrySettings) *storageExt {
 	return &storageExt{
-		config:    config,
-		logger:    otel.Logger,
-		factories: make(map[string]storage.Factory),
+		config:           config,
+		telset:           telset,
+		factories:        make(map[string]storage.Factory),
+		metricsFactories: make(map[string]storage.MetricsFactory),
 	}
 }
 
-type starter[Config any, Factory storage.Factory] struct {
-	ext         *storageExt
-	storageKind string
-	cfg         map[string]Config
-	builder     func(Config, metrics.Factory, *zap.Logger) (Factory, error)
-}
-
-func (s *starter[Config, Factory]) build(ctx context.Context, host component.Host) error {
-	for name, cfg := range s.cfg {
-		if _, ok := s.ext.factories[name]; ok {
-			return fmt.Errorf("duplicate %s storage name %s", s.storageKind, name)
+func (s *storageExt) Start(_ context.Context, _ component.Host) error {
+	baseFactory := otelmetrics.NewFactory(s.telset.MeterProvider)
+	mf := baseFactory.Namespace(metrics.NSOptions{Name: "jaeger"})
+	for storageName, cfg := range s.config.Backends {
+		s.telset.Logger.Sugar().Infof("Initializing storage '%s'", storageName)
+		var factory storage.Factory
+		var err error = errors.New("empty configuration")
+		switch {
+		case cfg.Memory != nil:
+			factory, err = memory.NewFactoryWithConfig(*cfg.Memory, mf, s.telset.Logger), nil
+		case cfg.Badger != nil:
+			factory, err = badger.NewFactoryWithConfig(*cfg.Badger, mf, s.telset.Logger)
+		case cfg.GRPC != nil:
+			//nolint: contextcheck
+			factory, err = grpc.NewFactoryWithConfig(*cfg.GRPC, mf, s.telset.Logger)
+		case cfg.Cassandra != nil:
+			factory, err = cassandra.NewFactoryWithConfig(*cfg.Cassandra, mf, s.telset.Logger)
+		case cfg.Elasticsearch != nil:
+			factory, err = es.NewFactoryWithConfig(*cfg.Elasticsearch, mf, s.telset.Logger)
+		case cfg.Opensearch != nil:
+			factory, err = es.NewFactoryWithConfig(*cfg.Opensearch, mf, s.telset.Logger)
 		}
-		factory, err := s.builder(
-			cfg,
-			metrics.NullFactory,
-			s.ext.logger.With(zap.String("storage_name", name)),
-		)
 		if err != nil {
-			return fmt.Errorf("failed to initialize %s storage %s: %w", s.storageKind, name, err)
+			return fmt.Errorf("failed to initialize storage '%s': %w", storageName, err)
 		}
-		s.ext.factories[name] = factory
+		s.factories[storageName] = factory
 	}
+
+	for metricStorageName, cfg := range s.config.MetricBackends {
+		s.telset.Logger.Sugar().Infof("Initializing metrics storage '%s'", metricStorageName)
+		var metricsFactory storage.MetricsFactory
+		var err error
+		if cfg.Prometheus != nil {
+			metricsFactory, err = prometheus.NewFactoryWithConfig(*cfg.Prometheus, s.telset.Logger)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to initialize metrics storage '%s': %w", metricStorageName, err)
+		}
+		s.metricsFactories[metricStorageName] = metricsFactory
+	}
+
 	return nil
 }
 
-func (s *storageExt) Start(ctx context.Context, host component.Host) error {
-	memStarter := &starter[memoryCfg.Configuration, *memory.Factory]{
-		ext:         s,
-		storageKind: "memory",
-		cfg:         s.config.Memory,
-		// memory factory does not return an error, so need to wrap it
-		builder: func(
-			cfg memoryCfg.Configuration,
-			metricsFactory metrics.Factory,
-			logger *zap.Logger,
-		) (*memory.Factory, error) {
-			return memory.NewFactoryWithConfig(cfg, metricsFactory, logger), nil
-		},
-	}
-	badgerStarter := &starter[badgerCfg.NamespaceConfig, *badger.Factory]{
-		ext:         s,
-		storageKind: "badger",
-		cfg:         s.config.Badger,
-		builder:     badger.NewFactoryWithConfig,
-	}
-	grpcStarter := &starter[grpcCfg.Configuration, *grpc.Factory]{
-		ext:         s,
-		storageKind: "grpc",
-		cfg:         s.config.GRPC,
-		builder:     grpc.NewFactoryWithConfig,
-	}
-	esStarter := &starter[esCfg.Configuration, *es.Factory]{
-		ext:         s,
-		storageKind: "elasticsearch",
-		cfg:         s.config.Elasticsearch,
-		builder:     es.NewFactoryWithConfig,
-	}
-	osStarter := &starter[esCfg.Configuration, *es.Factory]{
-		ext:         s,
-		storageKind: "opensearch",
-		cfg:         s.config.Opensearch,
-		builder:     es.NewFactoryWithConfig,
-	}
-	cassandraStarter := &starter[cassandraCfg.Configuration, *cassandra.Factory]{
-		ext:         s,
-		storageKind: "cassandra",
-		cfg:         s.config.Cassandra,
-		builder:     cassandra.NewFactoryWithConfig,
-	}
-
-	builders := []func(ctx context.Context, host component.Host) error{
-		memStarter.build,
-		badgerStarter.build,
-		grpcStarter.build,
-		esStarter.build,
-		osStarter.build,
-		cassandraStarter.build,
-		// TODO add support for other backends
-	}
-	for _, builder := range builders {
-		if err := builder(ctx, host); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *storageExt) Shutdown(ctx context.Context) error {
+func (s *storageExt) Shutdown(context.Context) error {
 	var errs []error
 	for _, factory := range s.factories {
 		if closer, ok := factory.(io.Closer); ok {
@@ -173,7 +169,12 @@ func (s *storageExt) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (s *storageExt) Factory(name string) (storage.Factory, bool) {
+func (s *storageExt) TraceStorageFactory(name string) (storage.Factory, bool) {
 	f, ok := s.factories[name]
 	return f, ok
+}
+
+func (s *storageExt) MetricStorageFactory(name string) (storage.MetricsFactory, bool) {
+	mf, ok := s.metricsFactories[name]
+	return mf, ok
 }

@@ -17,12 +17,12 @@ import (
 	"github.com/gorilla/mux"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/query/app/internal/api_v3"
 	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
 	"github.com/jaegertracing/jaeger/model"
-	"github.com/jaegertracing/jaeger/pkg/jtracer"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
@@ -48,7 +48,7 @@ type HTTPGateway struct {
 	QueryService *querysvc.QueryService
 	TenancyMgr   *tenancy.Manager
 	Logger       *zap.Logger
-	Tracer       *jtracer.JTracer
+	Tracer       trace.TracerProvider
 }
 
 // RegisterRoutes registers HTTP endpoints for APIv3 into provided mux.
@@ -66,7 +66,7 @@ func (h *HTTPGateway) addRoute(
 	router *mux.Router,
 	f func(http.ResponseWriter, *http.Request),
 	route string,
-	args ...interface{},
+	_ ...any, /* args */
 ) *mux.Route {
 	var handler http.Handler = http.HandlerFunc(f)
 	if h.TenancyMgr.Enabled {
@@ -75,7 +75,7 @@ func (h *HTTPGateway) addRoute(
 	traceMiddleware := otelhttp.NewHandler(
 		otelhttp.WithRouteTag(route, handler),
 		route,
-		otelhttp.WithTracerProvider(h.Tracer.OTEL))
+		otelhttp.WithTracerProvider(h.Tracer))
 	return router.HandleFunc(route, traceMiddleware.ServeHTTP)
 }
 
@@ -118,7 +118,7 @@ func (h *HTTPGateway) returnSpans(spans []*model.Span, w http.ResponseWriter) {
 func (h *HTTPGateway) returnSpansTestable(
 	spans []*model.Span,
 	w http.ResponseWriter,
-	modelToOTLP func(spans []*model.Span) (ptrace.Traces, error),
+	modelToOTLP func(_ []*model.Span) (ptrace.Traces, error),
 ) {
 	td, err := modelToOTLP(spans)
 	if h.tryHandleError(w, err, http.StatusInternalServerError) {
@@ -131,7 +131,7 @@ func (h *HTTPGateway) returnSpansTestable(
 	h.marshalResponse(response, w)
 }
 
-func (h *HTTPGateway) marshalResponse(response proto.Message, w http.ResponseWriter) {
+func (*HTTPGateway) marshalResponse(response proto.Message, w http.ResponseWriter) {
 	_ = new(jsonpb.Marshaler).Marshal(w, response)
 }
 

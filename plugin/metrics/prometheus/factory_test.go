@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/pkg/config"
+	promCfg "github.com/jaegertracing/jaeger/pkg/prometheus/config"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/storage"
 )
@@ -34,14 +35,13 @@ func TestPrometheusFactory(t *testing.T) {
 	f := NewFactory()
 	require.NoError(t, f.Initialize(zap.NewNop()))
 	assert.NotNil(t, f.logger)
-	assert.Equal(t, "prometheus", f.options.Primary.namespace)
 
 	listener, err := net.Listen("tcp", "localhost:")
 	require.NoError(t, err)
 	assert.NotNil(t, listener)
 	defer listener.Close()
 
-	f.options.Primary.ServerURL = "http://" + listener.Addr().String()
+	f.options.ServerURL = "http://" + listener.Addr().String()
 	reader, err := f.CreateMetricsReader()
 
 	require.NoError(t, err)
@@ -50,25 +50,14 @@ func TestPrometheusFactory(t *testing.T) {
 
 func TestWithDefaultConfiguration(t *testing.T) {
 	f := NewFactory()
-	assert.Equal(t, "http://localhost:9090", f.options.Primary.ServerURL)
-	assert.Equal(t, 30*time.Second, f.options.Primary.ConnectTimeout)
+	assert.Equal(t, "http://localhost:9090", f.options.ServerURL)
+	assert.Equal(t, 30*time.Second, f.options.ConnectTimeout)
 
-	assert.True(t, f.options.Primary.SupportSpanmetricsConnector)
-	assert.Empty(t, f.options.Primary.MetricNamespace)
-	assert.Equal(t, "ms", f.options.Primary.LatencyUnit)
+	assert.Empty(t, f.options.MetricNamespace)
+	assert.Equal(t, "ms", f.options.LatencyUnit)
 }
 
 func TestWithConfiguration(t *testing.T) {
-	t.Run("still supports the deprecated spanmetrics processor", func(t *testing.T) {
-		f := NewFactory()
-		v, command := config.Viperize(f.AddFlags)
-		err := command.ParseFlags([]string{
-			"--prometheus.query.support-spanmetrics-connector=false",
-		})
-		require.NoError(t, err)
-		f.InitFromViper(v, zap.NewNop())
-		assert.False(t, f.options.Primary.SupportSpanmetricsConnector)
-	})
 	t.Run("with custom configuration and no space in token file path", func(t *testing.T) {
 		f := NewFactory()
 		v, command := config.Viperize(f.AddFlags)
@@ -80,10 +69,10 @@ func TestWithConfiguration(t *testing.T) {
 		})
 		require.NoError(t, err)
 		f.InitFromViper(v, zap.NewNop())
-		assert.Equal(t, "http://localhost:1234", f.options.Primary.ServerURL)
-		assert.Equal(t, 5*time.Second, f.options.Primary.ConnectTimeout)
-		assert.Equal(t, "test/test_file.txt", f.options.Primary.TokenFilePath)
-		assert.False(t, f.options.Primary.TokenOverrideFromContext)
+		assert.Equal(t, "http://localhost:1234", f.options.ServerURL)
+		assert.Equal(t, 5*time.Second, f.options.ConnectTimeout)
+		assert.Equal(t, "test/test_file.txt", f.options.TokenFilePath)
+		assert.False(t, f.options.TokenOverrideFromContext)
 	})
 	t.Run("with space in token file path", func(t *testing.T) {
 		f := NewFactory()
@@ -93,21 +82,19 @@ func TestWithConfiguration(t *testing.T) {
 		})
 		require.NoError(t, err)
 		f.InitFromViper(v, zap.NewNop())
-		assert.Equal(t, "test/ test file.txt", f.options.Primary.TokenFilePath)
+		assert.Equal(t, "test/ test file.txt", f.options.TokenFilePath)
 	})
 	t.Run("with custom configuration of prometheus.query", func(t *testing.T) {
 		f := NewFactory()
 		v, command := config.Viperize(f.AddFlags)
 		err := command.ParseFlags([]string{
-			"--prometheus.query.support-spanmetrics-connector=true",
 			"--prometheus.query.namespace=mynamespace",
 			"--prometheus.query.duration-unit=ms",
 		})
 		require.NoError(t, err)
 		f.InitFromViper(v, zap.NewNop())
-		assert.True(t, f.options.Primary.SupportSpanmetricsConnector)
-		assert.Equal(t, "mynamespace", f.options.Primary.MetricNamespace)
-		assert.Equal(t, "ms", f.options.Primary.LatencyUnit)
+		assert.Equal(t, "mynamespace", f.options.MetricNamespace)
+		assert.Equal(t, "ms", f.options.LatencyUnit)
 	})
 	t.Run("with invalid prometheus.query.duration-unit", func(t *testing.T) {
 		defer func() {
@@ -123,7 +110,7 @@ func TestWithConfiguration(t *testing.T) {
 		})
 		require.NoError(t, err)
 		f.InitFromViper(v, zap.NewNop())
-		require.Empty(t, f.options.Primary.LatencyUnit)
+		require.Empty(t, f.options.LatencyUnit)
 	})
 }
 
@@ -146,6 +133,20 @@ func TestFailedTLSOptions(t *testing.T) {
 
 	f.InitFromViper(v, logger)
 	t.Errorf("f.InitFromViper did not panic")
+}
+
+func TestEmptyFactoryConfig(t *testing.T) {
+	cfg := promCfg.Configuration{}
+	_, err := NewFactoryWithConfig(cfg, zap.NewNop())
+	require.Error(t, err)
+}
+
+func TestFactoryConfig(t *testing.T) {
+	cfg := promCfg.Configuration{
+		ServerURL: "localhost:1234",
+	}
+	_, err := NewFactoryWithConfig(cfg, zap.NewNop())
+	require.NoError(t, err)
 }
 
 func TestMain(m *testing.M) {

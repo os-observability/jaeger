@@ -96,7 +96,7 @@ func NewFactoryWithConfig(
 		return nil, err
 	}
 
-	defaultConfig := getDefaultConfig()
+	defaultConfig := DefaultConfig()
 	cfg.ApplyDefaults(&defaultConfig)
 
 	archive := make(map[string]*namespaceConfig)
@@ -106,7 +106,7 @@ func NewFactoryWithConfig(
 	}
 
 	f := NewFactory()
-	f.InitFromOptions(Options{
+	f.configureFromOptions(&Options{
 		Primary: namespaceConfig{
 			Configuration: cfg,
 			namespace:     primaryNamespace,
@@ -126,15 +126,14 @@ func (f *Factory) AddFlags(flagSet *flag.FlagSet) {
 }
 
 // InitFromViper implements plugin.Configurable
-func (f *Factory) InitFromViper(v *viper.Viper, logger *zap.Logger) {
+func (f *Factory) InitFromViper(v *viper.Viper, _ *zap.Logger) {
 	f.Options.InitFromViper(v)
-	f.primaryConfig = f.Options.GetPrimary()
-	f.archiveConfig = f.Options.Get(archiveNamespace)
+	f.configureFromOptions(f.Options)
 }
 
-// InitFromOptions configures factory from Options struct.
-func (f *Factory) InitFromOptions(o Options) {
-	f.Options = &o
+// configureFromOptions configures factory from Options struct.
+func (f *Factory) configureFromOptions(o *Options) {
+	f.Options = o
 	f.primaryConfig = f.Options.GetPrimary()
 	f.archiveConfig = f.Options.Get(archiveNamespace)
 }
@@ -297,8 +296,8 @@ func createSpanWriter(
 	return writer, nil
 }
 
-func (f *Factory) CreateSamplingStore(maxBuckets int) (samplingstore.Store, error) {
-	params := esSampleStore.SamplingStoreParams{
+func (f *Factory) CreateSamplingStore(int /* maxBuckets */) (samplingstore.Store, error) {
+	params := esSampleStore.Params{
 		Client:                 f.getPrimaryClient,
 		Logger:                 f.logger,
 		IndexPrefix:            f.primaryConfig.IndexPrefix,
@@ -342,7 +341,7 @@ func createDependencyReader(
 	cfg *config.Configuration,
 	logger *zap.Logger,
 ) (dependencystore.Reader, error) {
-	reader := esDepStore.NewDependencyStore(esDepStore.DependencyStoreParams{
+	reader := esDepStore.NewDependencyStore(esDepStore.Params{
 		Client:              clientFn,
 		Logger:              logger,
 		IndexPrefix:         cfg.IndexPrefix,

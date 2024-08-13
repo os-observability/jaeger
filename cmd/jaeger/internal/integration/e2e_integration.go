@@ -15,10 +15,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/integration/storagecleaner"
-	"github.com/jaegertracing/jaeger/pkg/testutils"
 	"github.com/jaegertracing/jaeger/plugin/storage/integration"
 	"github.com/jaegertracing/jaeger/ports"
 )
@@ -37,16 +38,44 @@ const otlpPort = 4317
 //     (e.g. close remote-storage)
 type E2EStorageIntegration struct {
 	integration.StorageIntegration
-	ConfigFile string
+
+	SkipStorageCleaner  bool
+	ConfigFile          string
+	HealthCheckEndpoint string
 }
 
 // e2eInitialize starts the Jaeger-v2 collector with the provided config file,
 // it also initialize the SpanWriter and SpanReader below.
 // This function should be called before any of the tests start.
 func (s *E2EStorageIntegration) e2eInitialize(t *testing.T, storage string) {
-	logger, _ := testutils.NewLogger()
-	configFile := createStorageCleanerConfig(t, s.ConfigFile, storage)
+	logger := zaptest.NewLogger(t, zaptest.WrapOptions(zap.AddCaller()))
+	configFile := s.ConfigFile
+	if !s.SkipStorageCleaner {
+		configFile = createStorageCleanerConfig(t, s.ConfigFile, storage)
+	}
+
+	configFile, err := filepath.Abs(configFile)
+	require.NoError(t, err, "Failed to get absolute path of the config file")
+	require.FileExists(t, configFile, "Config file does not exist at the resolved path")
+
 	t.Logf("Starting Jaeger-v2 in the background with config file %s", configFile)
+
+	outFile, err := os.OpenFile(
+		filepath.Join(t.TempDir(), "jaeger_output_logs.txt"),
+		os.O_CREATE|os.O_WRONLY,
+		os.ModePerm,
+	)
+	require.NoError(t, err)
+	t.Logf("Writing the Jaeger-v2 output logs into %s", outFile.Name())
+
+	errFile, err := os.OpenFile(
+		filepath.Join(t.TempDir(), "jaeger_error_logs.txt"),
+		os.O_CREATE|os.O_WRONLY,
+		os.ModePerm,
+	)
+	require.NoError(t, err)
+	t.Logf("Writing the Jaeger-v2 error logs into %s", errFile.Name())
+
 	cmd := exec.Cmd{
 		Path: "./cmd/jaeger/jaeger",
 		Args: []string{"jaeger", "--config", configFile},
@@ -54,35 +83,71 @@ func (s *E2EStorageIntegration) e2eInitialize(t *testing.T, storage string) {
 		// since the binary config file jaeger_query's ui_config points to
 		// "./cmd/jaeger/config-ui.json"
 		Dir:    "../../../..",
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
+		Stdout: outFile,
+		Stderr: errFile,
 	}
+	t.Logf("Running command: %v", cmd.Args)
 	require.NoError(t, cmd.Start())
+
+	// Wait for the binary to start and become ready to serve requests.
+	healthCheckEndpoint := s.HealthCheckEndpoint
+	if healthCheckEndpoint == "" {
+		healthCheckEndpoint = fmt.Sprintf("http://localhost:%d/", ports.QueryHTTP)
+	}
 	require.Eventually(t, func() bool {
-		url := fmt.Sprintf("http://localhost:%d/", ports.QueryHTTP)
-		t.Logf("Checking if Jaeger-v2 is available on %s", url)
+		t.Logf("Checking if Jaeger-v2 is available on %s", healthCheckEndpoint)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthCheckEndpoint, nil)
+		if err != nil {
+			t.Logf("HTTP request creation failed: %v", err)
+			return false
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Log(err)
+			t.Logf("HTTP request failed: %v", err)
 			return false
 		}
 		defer resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 30*time.Second, 500*time.Millisecond, "Jaeger-v2 did not start")
+	}, 60*time.Second, 3*time.Second, "Jaeger-v2 did not start")
 	t.Log("Jaeger-v2 is ready")
 	t.Cleanup(func() {
-		require.NoError(t, cmd.Process.Kill())
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("Failed to kill Jaeger-v2 process: %v", err)
+		}
+		if t.Failed() {
+			// A Github Actions special annotation to create a foldable section
+			// in the Github runner output.
+			// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
+			fmt.Println("::group::🚧 🚧 🚧 Jaeger-v2 binary logs")
+			outLogs, err := os.ReadFile(outFile.Name())
+			if err != nil {
+				t.Errorf("Failed to read output logs: %v", err)
+			} else {
+				fmt.Printf("🚧 🚧 🚧 Jaeger-v2 output logs:\n%s", outLogs)
+			}
+
+			errLogs, err := os.ReadFile(errFile.Name())
+			if err != nil {
+				t.Errorf("Failed to read error logs: %v", err)
+			} else {
+				fmt.Printf("🚧 🚧 🚧 Jaeger-v2 error logs:\n%s", errLogs)
+			}
+			// End of Github Actions foldable section annotation.
+			fmt.Println("::endgroup::")
+		}
 	})
 
-	var err error
 	s.SpanWriter, err = createSpanWriter(logger, otlpPort)
 	require.NoError(t, err)
-	s.SpanReader, err = createSpanReader(ports.QueryGRPC)
+	s.SpanReader, err = createSpanReader(logger, ports.QueryGRPC)
 	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		// Call e2eCleanUp to close the SpanReader and SpanWriter gRPC connection.
+		s.e2eCleanUp(t)
+	})
 }
 
 // e2eCleanUp closes the SpanReader and SpanWriter gRPC connection.
@@ -95,39 +160,41 @@ func (s *E2EStorageIntegration) e2eCleanUp(t *testing.T) {
 func createStorageCleanerConfig(t *testing.T, configFile string, storage string) string {
 	data, err := os.ReadFile(configFile)
 	require.NoError(t, err)
-	var config map[string]interface{}
+	var config map[string]any
 	err = yaml.Unmarshal(data, &config)
 	require.NoError(t, err)
 
-	service, ok := config["service"].(map[string]interface{})
+	serviceAny, ok := config["service"]
 	require.True(t, ok)
-	service["extensions"] = append(service["extensions"].([]interface{}), "storage_cleaner")
+	service := serviceAny.(map[string]any)
+	service["extensions"] = append(service["extensions"].([]any), "storage_cleaner")
 
-	extensions, ok := config["extensions"].(map[string]interface{})
+	extensionsAny, ok := config["extensions"]
 	require.True(t, ok)
-	query, ok := extensions["jaeger_query"].(map[string]interface{})
+	extensions := extensionsAny.(map[string]any)
+	queryAny, ok := extensions["jaeger_query"]
 	require.True(t, ok)
-	trace_storage := query["trace_storage"].(string)
-	extensions["storage_cleaner"] = map[string]string{"trace_storage": trace_storage}
+	traceStorageAny, ok := queryAny.(map[string]any)["trace_storage"]
+	require.True(t, ok)
+	traceStorage := traceStorageAny.(string)
+	extensions["storage_cleaner"] = map[string]string{"trace_storage": traceStorage}
 
-	jaegerStorage, ok := extensions["jaeger_storage"].(map[string]interface{})
+	jaegerStorageAny, ok := extensions["jaeger_storage"]
 	require.True(t, ok)
+	jaegerStorage := jaegerStorageAny.(map[string]any)
+	backendsAny, ok := jaegerStorage["backends"]
+	require.True(t, ok)
+	backends := backendsAny.(map[string]any)
 
 	switch storage {
-	case "elasticsearch":
-		elasticsearch, ok := jaegerStorage["elasticsearch"].(map[string]interface{})
-		require.True(t, ok)
-		esMain, ok := elasticsearch["es_main"].(map[string]interface{})
-		require.True(t, ok)
+	case "elasticsearch", "opensearch":
+		someStoreAny, ok := backends["some_storage"]
+		require.True(t, ok, "expecting 'some_storage' entry, found: %v", jaegerStorage)
+		someStore := someStoreAny.(map[string]any)
+		esMainAny, ok := someStore[storage]
+		require.True(t, ok, "expecting '%s' entry, found %v", storage, someStore)
+		esMain := esMainAny.(map[string]any)
 		esMain["service_cache_ttl"] = "1ms"
-
-	case "opensearch":
-		opensearch, ok := jaegerStorage["opensearch"].(map[string]interface{})
-		require.True(t, ok)
-		osMain, ok := opensearch["os_main"].(map[string]interface{})
-		require.True(t, ok)
-		osMain["service_cache_ttl"] = "1ms"
-
 	default:
 		// Do Nothing
 	}
@@ -142,8 +209,9 @@ func createStorageCleanerConfig(t *testing.T, configFile string, storage string)
 }
 
 func purge(t *testing.T) {
-	Addr := fmt.Sprintf("http://0.0.0.0:%s%s", storagecleaner.Port, storagecleaner.URL)
-	r, err := http.NewRequestWithContext(context.Background(), http.MethodPost, Addr, nil)
+	addr := fmt.Sprintf("http://0.0.0.0:%s%s", storagecleaner.Port, storagecleaner.URL)
+	t.Logf("Purging storage via %s", addr)
+	r, err := http.NewRequestWithContext(context.Background(), http.MethodPost, addr, nil)
 	require.NoError(t, err)
 
 	client := &http.Client{}
@@ -151,6 +219,8 @@ func purge(t *testing.T) {
 	resp, err := client.Do(r)
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body: %s", string(body))
 }

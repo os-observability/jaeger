@@ -64,21 +64,26 @@ const (
 	defaultKeysDir            = defaultDataDir + string(os.PathSeparator) + "keys"
 )
 
-// NewOptions creates a new Options struct.
-func NewOptions(primaryNamespace string, otherNamespaces ...string) *Options {
+func DefaultNamespaceConfig() NamespaceConfig {
 	defaultBadgerDataDir := getCurrentExecutableDir()
+	return NamespaceConfig{
+		SpanStoreTTL:          defaultTTL,
+		SyncWrites:            false, // Performance over durability
+		Ephemeral:             true,  // Default is ephemeral storage
+		ValueDirectory:        defaultBadgerDataDir + defaultValueDir,
+		KeyDirectory:          defaultBadgerDataDir + defaultKeysDir,
+		MaintenanceInterval:   defaultMaintenanceInterval,
+		MetricsUpdateInterval: defaultMetricsUpdateInterval,
+	}
+}
+
+// NewOptions creates a new Options struct.
+func NewOptions(primaryNamespace string, _ ...string /* otherNamespaces */) *Options {
+	defaultConfig := DefaultNamespaceConfig()
+	defaultConfig.namespace = primaryNamespace
 
 	options := &Options{
-		Primary: NamespaceConfig{
-			namespace:             primaryNamespace,
-			SpanStoreTTL:          defaultTTL,
-			SyncWrites:            false, // Performance over durability
-			Ephemeral:             true,  // Default is ephemeral storage
-			ValueDirectory:        defaultBadgerDataDir + defaultValueDir,
-			KeyDirectory:          defaultBadgerDataDir + defaultKeysDir,
-			MaintenanceInterval:   defaultMaintenanceInterval,
-			MetricsUpdateInterval: defaultMetricsUpdateInterval,
-		},
+		Primary: defaultConfig,
 	}
 
 	return options
@@ -143,7 +148,7 @@ func (opt *Options) InitFromViper(v *viper.Viper, logger *zap.Logger) {
 	initFromViper(&opt.Primary, v, logger)
 }
 
-func initFromViper(cfg *NamespaceConfig, v *viper.Viper, logger *zap.Logger) {
+func initFromViper(cfg *NamespaceConfig, v *viper.Viper, _ *zap.Logger) {
 	cfg.Ephemeral = v.GetBool(cfg.namespace + suffixEphemeral)
 	cfg.KeyDirectory = v.GetString(cfg.namespace + suffixKeyDirectory)
 	cfg.ValueDirectory = v.GetString(cfg.namespace + suffixValueDirectory)

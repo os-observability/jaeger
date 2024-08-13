@@ -38,18 +38,8 @@ func newCassandraStorageIntegration() *CassandraStorageIntegration {
 	s := &CassandraStorageIntegration{
 		StorageIntegration: StorageIntegration{
 			GetDependenciesReturnsSource: true,
-			SkipArchiveTest:              true,
 
-			SkipList: []string{
-				"Tags_+_Operation_name_+_Duration_range",
-				"Tags_+_Duration_range",
-				"Tags_+_Operation_name_+_max_Duration",
-				"Tags_+_max_Duration",
-				"Operation_name_+_Duration_range",
-				"Duration_range",
-				"max_Duration",
-				"Multiple_Traces",
-			},
+			SkipList: CassandraSkippedTests,
 		},
 	}
 	s.CleanUp = s.cleanUp
@@ -60,8 +50,8 @@ func (s *CassandraStorageIntegration) cleanUp(t *testing.T) {
 	require.NoError(t, s.factory.Purge(context.Background()))
 }
 
-func (s *CassandraStorageIntegration) initializeCassandraFactory(t *testing.T, flags []string) *cassandra.Factory {
-	logger := zaptest.NewLogger(t, zaptest.Level(zap.DebugLevel))
+func (*CassandraStorageIntegration) initializeCassandraFactory(t *testing.T, flags []string) *cassandra.Factory {
+	logger := zaptest.NewLogger(t, zaptest.WrapOptions(zap.AddCaller()))
 	f := cassandra.NewFactory()
 	v, command := config.Viperize(f.AddFlags)
 	require.NoError(t, command.ParseFlags(flags))
@@ -72,13 +62,23 @@ func (s *CassandraStorageIntegration) initializeCassandraFactory(t *testing.T, f
 
 func (s *CassandraStorageIntegration) initializeCassandra(t *testing.T) {
 	f := s.initializeCassandraFactory(t, []string{
+		"--cassandra.basic.allowed-authenticators=",
+		"--cassandra.password=password",
+		"--cassandra.username=username",
 		"--cassandra.keyspace=jaeger_v1_dc1",
+		"--cassandra-archive.keyspace=jaeger_v1_dc1_archive",
+		"--cassandra-archive.enabled=true",
+		"--cassandra-archive.servers=127.0.0.1",
 	})
 	s.factory = f
 	var err error
 	s.SpanWriter, err = f.CreateSpanWriter()
 	require.NoError(t, err)
 	s.SpanReader, err = f.CreateSpanReader()
+	require.NoError(t, err)
+	s.ArchiveSpanReader, err = f.CreateArchiveSpanReader()
+	require.NoError(t, err)
+	s.ArchiveSpanWriter, err = f.CreateArchiveSpanWriter()
 	require.NoError(t, err)
 	s.SamplingStore, err = f.CreateSamplingStore(0)
 	require.NoError(t, err)
