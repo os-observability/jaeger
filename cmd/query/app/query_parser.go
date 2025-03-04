@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
@@ -24,10 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger-idl/model/v1"
+	"github.com/jaegertracing/jaeger/cmd/query/app/querysvc"
+	"github.com/jaegertracing/jaeger/internal/storage/v1/api/metricstore"
+	"github.com/jaegertracing/jaeger/internal/storage/v1/api/spanstore"
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2/metrics"
-	"github.com/jaegertracing/jaeger/storage/metricsstore"
-	"github.com/jaegertracing/jaeger/storage/spanstore"
 )
 
 const (
@@ -44,6 +34,7 @@ const (
 	spanKindParam    = "spanKind"
 	endTimeParam     = "end"
 	prettyPrintParam = "prettyPrint"
+	rawParam         = "raw"
 )
 
 var (
@@ -70,7 +61,7 @@ type (
 	}
 
 	traceQueryParameters struct {
-		spanstore.TraceQueryParameters
+		querysvc.TraceQueryParameters
 		traceIDs []model.TraceID
 	}
 
@@ -172,16 +163,24 @@ func (p *queryParser) parseTraceQueryParams(r *http.Request) (*traceQueryParamet
 		traceIDs = append(traceIDs, traceID)
 	}
 
+	raw, err := parseBool(r, rawParam)
+	if err != nil {
+		return nil, err
+	}
+
 	traceQuery := &traceQueryParameters{
-		TraceQueryParameters: spanstore.TraceQueryParameters{
-			ServiceName:   service,
-			OperationName: operation,
-			StartTimeMin:  startTime,
-			StartTimeMax:  endTime,
-			Tags:          tags,
-			NumTraces:     limit,
-			DurationMin:   minDuration,
-			DurationMax:   maxDuration,
+		TraceQueryParameters: querysvc.TraceQueryParameters{
+			TraceQueryParameters: spanstore.TraceQueryParameters{
+				ServiceName:   service,
+				OperationName: operation,
+				StartTimeMin:  startTime,
+				StartTimeMax:  endTime,
+				Tags:          tags,
+				NumTraces:     limit,
+				DurationMin:   minDuration,
+				DurationMax:   maxDuration,
+			},
+			RawTraces: raw,
 		},
 		traceIDs: traceIDs,
 	}
@@ -243,7 +242,7 @@ func (p *queryParser) parseDependenciesQueryParams(r *http.Request) (dqp depende
 //	spanKinds ::= spanKind | spanKind '&' spanKinds
 //	spanKind ::= 'spanKind=' spanKindType
 //	spanKindType ::= "unspecified" | "internal" | "server" | "client" | "producer" | "consumer"
-func (p *queryParser) parseMetricsQueryParams(r *http.Request) (bqp metricsstore.BaseQueryParameters, err error) {
+func (p *queryParser) parseMetricsQueryParams(r *http.Request) (bqp metricstore.BaseQueryParameters, err error) {
 	query := r.URL.Query()
 	services, ok := query[serviceParam]
 	if !ok {

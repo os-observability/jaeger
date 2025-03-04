@@ -1,16 +1,5 @@
 // Copyright (c) 2021 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
@@ -27,7 +16,6 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/es-rollover/app/lookback"
 	"github.com/jaegertracing/jaeger/cmd/es-rollover/app/rollover"
 	"github.com/jaegertracing/jaeger/pkg/config"
-	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/es/client"
 )
 
@@ -41,8 +29,6 @@ func main() {
 		Long:  "Jaeger es-rollover manages Jaeger indices",
 	}
 
-	tlsFlags := tlscfg.ClientFlagsConfig{Prefix: "es"}
-
 	// Init command
 	initCfg := &initialize.Config{}
 	initCommand := &cobra.Command{
@@ -53,10 +39,9 @@ func main() {
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return app.ExecuteAction(app.ActionExecuteOptions{
-				Args:     args,
-				Viper:    v,
-				Logger:   logger,
-				TLSFlags: tlsFlags,
+				Args:   args,
+				Viper:  v,
+				Logger: logger,
 			}, func(c client.Client, cfg app.Config) app.Action {
 				initCfg.Config = cfg
 				initCfg.InitFromViper(v)
@@ -91,10 +76,9 @@ func main() {
 		RunE: func(_ *cobra.Command, args []string) error {
 			rolloverCfg.InitFromViper(v)
 			return app.ExecuteAction(app.ActionExecuteOptions{
-				Args:     args,
-				Viper:    v,
-				Logger:   logger,
-				TLSFlags: tlsFlags,
+				Args:   args,
+				Viper:  v,
+				Logger: logger,
 			}, func(c client.Client, cfg app.Config) app.Action {
 				rolloverCfg.Config = cfg
 				rolloverCfg.InitFromViper(v)
@@ -120,10 +104,9 @@ func main() {
 		RunE: func(_ *cobra.Command, args []string) error {
 			lookbackCfg.InitFromViper(v)
 			return app.ExecuteAction(app.ActionExecuteOptions{
-				Args:     args,
-				Viper:    v,
-				Logger:   logger,
-				TLSFlags: tlsFlags,
+				Args:   args,
+				Viper:  v,
+				Logger: logger,
 			}, func(c client.Client, cfg app.Config) app.Action {
 				lookbackCfg.Config = cfg
 				lookbackCfg.InitFromViper(v)
@@ -140,7 +123,7 @@ func main() {
 		},
 	}
 
-	addPersistentFlags(v, rootCmd, tlsFlags.AddFlags, app.AddFlags)
+	addPersistentFlags(v, rootCmd, app.AddFlags)
 	addSubCommand(v, rootCmd, initCommand, initCfg.AddFlags)
 	addSubCommand(v, rootCmd, rolloverCommand, rolloverCfg.AddFlags)
 	addSubCommand(v, rootCmd, lookbackCommand, lookbackCfg.AddFlags)

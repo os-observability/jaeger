@@ -1,16 +1,5 @@
 // Copyright (c) 2021 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
@@ -18,7 +7,12 @@ import (
 	"flag"
 
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/collector/config/configtls"
+
+	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 )
+
+var tlsFlagsCfg = tlscfg.ClientFlagsConfig{Prefix: "es"}
 
 const (
 	indexPrefix      = "index-prefix"
@@ -44,6 +38,7 @@ type Config struct {
 	Timeout          int
 	SkipDependencies bool
 	AdaptiveSampling bool
+	TLSConfig        configtls.ClientConfig
 }
 
 // AddFlags adds flags
@@ -57,6 +52,7 @@ func AddFlags(flags *flag.FlagSet) {
 	flags.Int(timeout, 120, "Number of seconds to wait for master node response")
 	flags.Bool(skipDependencies, false, "Disable rollover for dependencies index")
 	flags.Bool(adaptiveSampling, false, "Enable rollover for adaptive sampling index")
+	tlsFlagsCfg.AddFlags(flags)
 }
 
 // InitFromViper initializes config from viper.Viper.
@@ -73,4 +69,9 @@ func (c *Config) InitFromViper(v *viper.Viper) {
 	c.Timeout = v.GetInt(timeout)
 	c.SkipDependencies = v.GetBool(skipDependencies)
 	c.AdaptiveSampling = v.GetBool(adaptiveSampling)
+	tlsCfg, err := tlsFlagsCfg.InitFromViper(v)
+	if err != nil {
+		panic(err)
+	}
+	c.TLSConfig = tlsCfg
 }

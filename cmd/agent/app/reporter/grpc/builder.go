@@ -1,16 +1,5 @@
 // Copyright (c) 2018-2019 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package grpc
 
@@ -21,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -30,7 +20,6 @@ import (
 	"google.golang.org/grpc/resolver/manual"
 
 	"github.com/jaegertracing/jaeger/cmd/agent/app/reporter"
-	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/discovery"
 	"github.com/jaegertracing/jaeger/pkg/discovery/grpcresolver"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
@@ -41,13 +30,11 @@ import (
 type ConnBuilder struct {
 	// CollectorHostPorts is list of host:port Jaeger Collectors.
 	CollectorHostPorts []string `yaml:"collectorHostPorts"`
-
-	MaxRetry uint
-	TLS      tlscfg.Options
-
-	DiscoveryMinPeers int
-	Notifier          discovery.Notifier
-	Discoverer        discovery.Discoverer
+	TLS                *configtls.ClientConfig
+	MaxRetry           uint
+	DiscoveryMinPeers  int
+	Notifier           discovery.Notifier
+	Discoverer         discovery.Discoverer
 
 	AdditionalDialOptions []grpc.DialOption
 }
@@ -61,13 +48,12 @@ func NewConnBuilder() *ConnBuilder {
 func (b *ConnBuilder) CreateConnection(ctx context.Context, logger *zap.Logger, mFactory metrics.Factory) (*grpc.ClientConn, error) {
 	var dialOptions []grpc.DialOption
 	var dialTarget string
-	if b.TLS.Enabled { // user requested a secure connection
+	if b.TLS != nil { // user requested a secure connection
 		logger.Info("Agent requested secure grpc connection to collector(s)")
-		tlsConf, err := b.TLS.Config(logger)
+		tlsConf, err := b.TLS.LoadTLSConfig(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load TLS config: %w", err)
 		}
-
 		creds := credentials.NewTLS(tlsConf)
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(creds))
 	} else { // insecure connection

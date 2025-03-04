@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package cmd
 
@@ -82,6 +71,22 @@ func onInitialize() {
 	if config.RouteWorkerPoolSize != fixRouteWorkerPoolSize {
 		logger.Info("fix: overriding route worker pool size", zap.Int("old", config.RouteWorkerPoolSize), zap.Int("new", fixRouteWorkerPoolSize))
 		config.RouteWorkerPoolSize = fixRouteWorkerPoolSize
+	}
+
+	if customerHostname != "0.0.0.0" {
+		logger.Info("changing customer service hostname", zap.String("old", "0.0.0.0"), zap.String("new", customerHostname))
+	}
+
+	if driverHostname != "0.0.0.0" {
+		logger.Info("changing driver service hostname", zap.String("old", "0.0.0.0"), zap.String("new", driverHostname))
+	}
+
+	if frontendHostname != "0.0.0.0" {
+		logger.Info("changing frontend service hostname", zap.String("old", "0.0.0.0"), zap.String("new", frontendHostname))
+	}
+
+	if routeHostname != "0.0.0.0" {
+		logger.Info("changing route service hostname", zap.String("old", "0.0.0.0"), zap.String("new", routeHostname))
 	}
 
 	if customerPort != 8081 {

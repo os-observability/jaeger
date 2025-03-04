@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
@@ -21,7 +10,6 @@ import (
 	"expvar"
 	"flag"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -32,15 +20,14 @@ import (
 	"go.uber.org/zap"
 	yaml "gopkg.in/yaml.v3"
 
+	"github.com/jaegertracing/jaeger-idl/proto-gen/api_v2"
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/zipkincore"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/configmanager"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/reporter"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/reporter/grpc"
 	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
-	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
-	"github.com/jaegertracing/jaeger/thrift-gen/baggage"
-	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
-	"github.com/jaegertracing/jaeger/thrift-gen/zipkincore"
 )
 
 var yamlConfig = `
@@ -161,9 +148,9 @@ func TestBuilderWithProcessorErrors(t *testing.T) {
 		_, err := cfg.CreateAgent(&fakeCollectorProxy{}, zap.NewNop(), metrics.NullFactory)
 		require.Error(t, err)
 		if testCase.err != "" {
-			assert.Contains(t, err.Error(), testCase.err)
+			assert.ErrorContains(t, err, testCase.err)
 		} else if testCase.errContains != "" {
-			assert.True(t, strings.Contains(err.Error(), testCase.errContains), "error must contain %s", testCase.errContains)
+			assert.ErrorContains(t, err, testCase.errContains, "error must contain %s", testCase.errContains)
 		}
 	}
 }
@@ -206,10 +193,6 @@ func (fakeCollectorProxy) GetSamplingStrategy(_ context.Context, _ string) (*api
 	return nil, errors.New("no peers available")
 }
 
-func (fakeCollectorProxy) GetBaggageRestrictions(_ context.Context, _ string) ([]*baggage.BaggageRestriction, error) {
-	return nil, nil
-}
-
 func TestCreateCollectorProxy(t *testing.T) {
 	tests := []struct {
 		flags  []string
@@ -235,6 +218,7 @@ func TestCreateCollectorProxy(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run("", func(t *testing.T) {
+			t.Parallel()
 			flags := &flag.FlagSet{}
 			grpc.AddFlags(flags)
 			reporter.AddFlags(flags)

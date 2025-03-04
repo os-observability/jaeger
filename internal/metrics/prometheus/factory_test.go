@@ -1,16 +1,5 @@
 // Copyright (c) 2017 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package prometheus_test
 
@@ -47,7 +36,7 @@ func TestSeparator(t *testing.T) {
 	snapshot, err := registry.Gather()
 	require.NoError(t, err)
 	m1 := findMetric(t, snapshot, "bender:rodriguez_total", map[string]string{"a": "b"})
-	assert.EqualValues(t, 1, m1.GetCounter().GetValue(), "%+v", m1)
+	assert.InDelta(t, 1.0, m1.GetCounter().GetValue(), 0.01, "%+v", m1)
 }
 
 func TestCounter(t *testing.T) {
@@ -86,10 +75,10 @@ func TestCounter(t *testing.T) {
 	assert.EqualValues(t, "Help message", snapshot[0].GetHelp())
 
 	m1 := findMetric(t, snapshot, "bender_rodriguez_total", map[string]string{"a": "b", "x": "y"})
-	assert.EqualValues(t, 3, m1.GetCounter().GetValue(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetCounter().GetValue(), 0.01, "%+v", m1)
 
 	m2 := findMetric(t, snapshot, "bender_rodriguez_total", map[string]string{"a": "b", "x": "z"})
-	assert.EqualValues(t, 7, m2.GetCounter().GetValue(), "%+v", m2)
+	assert.InDelta(t, 7.0, m2.GetCounter().GetValue(), 0.01, "%+v", m2)
 }
 
 func TestCounterDefaultHelp(t *testing.T) {
@@ -143,10 +132,10 @@ func TestGauge(t *testing.T) {
 	assert.EqualValues(t, "Help message", snapshot[0].GetHelp())
 
 	m1 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "y"})
-	assert.EqualValues(t, 2, m1.GetGauge().GetValue(), "%+v", m1)
+	assert.InDelta(t, 2.0, m1.GetGauge().GetValue(), 0.01, "%+v", m1)
 
 	m2 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "z"})
-	assert.EqualValues(t, 4, m2.GetGauge().GetValue(), "%+v", m2)
+	assert.InDelta(t, 4.0, m2.GetGauge().GetValue(), 0.01, "%+v", m2)
 }
 
 func TestGaugeDefaultHelp(t *testing.T) {
@@ -201,7 +190,7 @@ func TestTimer(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	for _, bucket := range m1.GetHistogram().GetBucket() {
 		switch {
 		case bucket.GetUpperBound() < 1:
@@ -215,7 +204,7 @@ func TestTimer(t *testing.T) {
 
 	m2 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "z"})
 	assert.EqualValues(t, 2, m2.GetHistogram().GetSampleCount(), "%+v", m2)
-	assert.EqualValues(t, 7, m2.GetHistogram().GetSampleSum(), "%+v", m2)
+	assert.InDelta(t, 7.0, m2.GetHistogram().GetSampleSum(), 0.01, "%+v", m2)
 	for _, bucket := range m2.GetHistogram().GetBucket() {
 		switch {
 		case bucket.GetUpperBound() < 3:
@@ -260,7 +249,7 @@ func TestTimerCustomBuckets(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_bending_rodriguez", map[string]string{"x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	assert.Len(t, m1.GetHistogram().GetBucket(), 2)
 }
 
@@ -281,7 +270,7 @@ func TestTimerDefaultBuckets(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_bending_rodriguez", map[string]string{"x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	assert.Len(t, m1.GetHistogram().GetBucket(), 2)
 }
 
@@ -322,7 +311,7 @@ func TestHistogram(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	for _, bucket := range m1.GetHistogram().GetBucket() {
 		switch {
 		case bucket.GetUpperBound() < 1:
@@ -336,7 +325,7 @@ func TestHistogram(t *testing.T) {
 
 	m2 := findMetric(t, snapshot, "bender_rodriguez", map[string]string{"a": "b", "x": "z"})
 	assert.EqualValues(t, 2, m2.GetHistogram().GetSampleCount(), "%+v", m2)
-	assert.EqualValues(t, 7, m2.GetHistogram().GetSampleSum(), "%+v", m2)
+	assert.InDelta(t, 7.0, m2.GetHistogram().GetSampleSum(), 0.01, "%+v", m2)
 	for _, bucket := range m2.GetHistogram().GetBucket() {
 		switch {
 		case bucket.GetUpperBound() < 3:
@@ -381,7 +370,7 @@ func TestHistogramCustomBuckets(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_bending_rodriguez", map[string]string{"x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	assert.Len(t, m1.GetHistogram().GetBucket(), 1)
 }
 
@@ -402,7 +391,7 @@ func TestHistogramDefaultBuckets(t *testing.T) {
 
 	m1 := findMetric(t, snapshot, "bender_bending_rodriguez", map[string]string{"x": "y"})
 	assert.EqualValues(t, 2, m1.GetHistogram().GetSampleCount(), "%+v", m1)
-	assert.EqualValues(t, 3, m1.GetHistogram().GetSampleSum(), "%+v", m1)
+	assert.InDelta(t, 3.0, m1.GetHistogram().GetSampleSum(), 0.01, "%+v", m1)
 	assert.Len(t, m1.GetHistogram().GetBucket(), 1)
 }
 
@@ -412,9 +401,7 @@ func findMetric(t *testing.T, snapshot []*promModel.MetricFamily, name string, t
 			continue
 		}
 		for _, m := range mf.GetMetric() {
-			if len(m.GetLabel()) != len(tags) {
-				t.Fatalf("Mismatching labels for metric %v: want %v, have %v", name, tags, m.GetLabel())
-			}
+			require.Lenf(t, m.GetLabel(), len(tags), "Mismatching labels for metric %v: want %v, have %v", name, tags, m.GetLabel())
 			match := true
 			for _, l := range m.GetLabel() {
 				if v, ok := tags[l.GetName()]; !ok || v != l.GetValue() {

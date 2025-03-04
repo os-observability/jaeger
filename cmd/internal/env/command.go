@@ -1,16 +1,5 @@
 // Copyright (c) 2018 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package env
 
@@ -21,9 +10,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/jaegertracing/jaeger/plugin/metrics"
-	"github.com/jaegertracing/jaeger/plugin/sampling/strategyprovider"
-	"github.com/jaegertracing/jaeger/plugin/storage"
+	ss "github.com/jaegertracing/jaeger/internal/sampling/samplingstrategy/metafactory"
+	"github.com/jaegertracing/jaeger/internal/storage/metricstore"
+	storage "github.com/jaegertracing/jaeger/internal/storage/v1/factory"
 )
 
 const (
@@ -77,11 +66,11 @@ func Command() *cobra.Command {
 		"The type of backend used for service dependencies storage.",
 	)
 	fs.String(
-		strategyprovider.SamplingTypeEnvVar,
+		ss.SamplingTypeEnvVar,
 		"file",
 		fmt.Sprintf(
 			strings.ReplaceAll(samplingTypeDescription, "\n", " "),
-			strings.Join(strategyprovider.AllSamplingTypes, ", "),
+			strings.Join(ss.AllSamplingTypes, ", "),
 		),
 	)
 	fs.String(
@@ -90,15 +79,15 @@ func Command() *cobra.Command {
 		fmt.Sprintf(
 			strings.ReplaceAll(samplingStorageTypeDescription, "\n", " "),
 			strings.Join(storage.AllSamplingStorageTypes(), ", "),
-			strategyprovider.SamplingTypeEnvVar,
+			ss.SamplingTypeEnvVar,
 		),
 	)
 	fs.String(
-		metrics.StorageTypeEnvVar,
+		metricstore.StorageTypeEnvVar,
 		"",
 		fmt.Sprintf(
 			strings.ReplaceAll(metricsStorageTypeDescription, "\n", " "),
-			strings.Join(metrics.AllStorageTypes, ", "),
+			strings.Join(metricstore.AllStorageTypes, ", "),
 		),
 	)
 	long := fmt.Sprintf(longTemplate, strings.ReplaceAll(fs.FlagUsagesWrapped(0), "      --", "\n"))

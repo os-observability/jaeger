@@ -1,22 +1,12 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,9 +30,10 @@ import (
 //go:generate mockery -all -dir ../../../pkg/fswatcher
 
 func TestNotExistingUiConfig(t *testing.T) {
-	handler, err := NewStaticAssetsHandler("/foo/bar", StaticAssetsHandlerOptions{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no such file or directory")
+	handler, err := NewStaticAssetsHandler("/foo/bar", StaticAssetsHandlerOptions{
+		Logger: zap.NewNop(),
+	})
+	require.ErrorContains(t, err, "no such file or directory")
 	assert.Nil(t, handler)
 }
 
@@ -53,10 +44,8 @@ func TestRegisterStaticHandlerPanic(t *testing.T) {
 			mux.NewRouter(),
 			logger,
 			&QueryOptions{
-				QueryOptionsBase: QueryOptionsBase{
-					StaticAssets: QueryOptionsStaticAssets{
-						Path: "/foo/bar",
-					},
+				UIConfig: UIConfig{
+					AssetsPath: "/foo/bar",
 				},
 			},
 			querysvc.StorageCapabilities{ArchiveStorage: false},
@@ -120,14 +109,12 @@ func TestRegisterStaticHandler(t *testing.T) {
 				r = r.PathPrefix(testCase.basePath).Subrouter()
 			}
 			closer := RegisterStaticHandler(r, logger, &QueryOptions{
-				QueryOptionsBase: QueryOptionsBase{
-					StaticAssets: QueryOptionsStaticAssets{
-						Path:      "fixture",
-						LogAccess: testCase.logAccess,
-					},
-					BasePath: testCase.basePath,
-					UIConfig: testCase.UIConfigPath,
+				UIConfig: UIConfig{
+					ConfigFile: testCase.UIConfigPath,
+					AssetsPath: "fixture",
+					LogAccess:  testCase.logAccess,
 				},
+				BasePath: testCase.basePath,
 			},
 				querysvc.StorageCapabilities{ArchiveStorage: testCase.archiveStorage},
 			)
@@ -166,13 +153,23 @@ func TestRegisterStaticHandler(t *testing.T) {
 }
 
 func TestNewStaticAssetsHandlerErrors(t *testing.T) {
-	_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{UIConfigPath: "fixture/invalid-config"})
+	_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{
+		UIConfig: UIConfig{
+			ConfigFile: "fixture/invalid-config",
+		},
+		Logger: zap.NewNop(),
+	})
 	require.Error(t, err)
 
 	for _, base := range []string{"x", "x/", "/x/"} {
-		_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{UIConfigPath: "fixture/ui-config.json", BasePath: base})
-		require.Errorf(t, err, "basePath=%s", base)
-		assert.Contains(t, err.Error(), "invalid base path")
+		_, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{
+			UIConfig: UIConfig{
+				ConfigFile: "fixture/ui-config.json",
+			},
+			BasePath: base,
+			Logger:   zap.NewNop(),
+		})
+		assert.ErrorContainsf(t, err, "invalid base path", "basePath=%s", base)
 	}
 }
 
@@ -197,8 +194,10 @@ func TestHotReloadUIConfig(t *testing.T) {
 	zcore, logObserver := observer.New(zapcore.InfoLevel)
 	logger := zap.New(zcore)
 	h, err := NewStaticAssetsHandler("fixture", StaticAssetsHandlerOptions{
-		UIConfigPath: cfgFileName,
-		Logger:       logger,
+		UIConfig: UIConfig{
+			ConfigFile: cfgFileName,
+		},
+		Logger: logger,
 	})
 	require.NoError(t, err)
 	defer h.Close()
@@ -311,7 +310,7 @@ type fakeFile struct {
 }
 
 func (*fakeFile) Read([]byte) (n int, err error) {
-	return 0, fmt.Errorf("read error")
+	return 0, errors.New("read error")
 }
 
 func TestLoadIndexHTMLReadError(t *testing.T) {

@@ -1,16 +1,5 @@
 // Copyright (c) 2019 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package flags
 
@@ -51,6 +40,30 @@ type Service struct {
 	MetricsFactory metrics.Factory
 
 	signalsChannel chan os.Signal
+}
+
+func PrintV1EOL() {
+	println(`
+*******************************************************************************
+
+🛑  WARNING: End-of-life Notice for Jaeger v1
+
+You are currently running a v1 version of Jaeger, which is deprecated and will
+reach end-of-life on December 31st, 2025. This means there will be no further
+development, bug fixes, or security patches for v1 after this date.
+
+We strongly recommend migrating to Jaeger v2 for continued support and access
+to new features.
+
+For detailed migration instructions, please refer to the official Jaeger
+documentation:  https://www.jaegertracing.io/docs/latest/migration/
+
+Tracking issue: https://github.com/jaegertracing/jaeger/issues/6321
+
+🛑  WARNING: End-of-life Notice for Jaeger v1
+
+*******************************************************************************
+`)
 }
 
 // NewService creates a new Service.

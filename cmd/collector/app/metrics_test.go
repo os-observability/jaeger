@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
@@ -20,10 +9,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/jaegertracing/jaeger-idl/model/v1"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
 	"github.com/jaegertracing/jaeger/internal/metricstest"
-	"github.com/jaegertracing/jaeger/model"
 	jaegerM "github.com/jaegertracing/jaeger/pkg/metrics"
 )
 
@@ -40,7 +30,7 @@ func TestProcessorMetrics(t *testing.T) {
 
 	grpcChannelFormat := spm.GetCountsForFormat(processor.JaegerSpanFormat, processor.GRPCTransport)
 	assert.NotNil(t, grpcChannelFormat)
-	grpcChannelFormat.ReceivedBySvc.ReportServiceNameForSpan(&model.Span{
+	grpcChannelFormat.ReceivedBySvc.ForSpanV1(&model.Span{
 		Process: &model.Process{},
 	})
 	mSpan := model.Span{
@@ -48,16 +38,26 @@ func TestProcessorMetrics(t *testing.T) {
 			ServiceName: "fry",
 		},
 	}
-	grpcChannelFormat.ReceivedBySvc.ReportServiceNameForSpan(&mSpan)
+	grpcChannelFormat.ReceivedBySvc.ForSpanV1(&mSpan)
 	mSpan.Flags.SetDebug()
-	grpcChannelFormat.ReceivedBySvc.ReportServiceNameForSpan(&mSpan)
+	grpcChannelFormat.ReceivedBySvc.ForSpanV1(&mSpan)
 	mSpan.ReplaceParentID(1234)
-	grpcChannelFormat.ReceivedBySvc.ReportServiceNameForSpan(&mSpan)
+	grpcChannelFormat.ReceivedBySvc.ForSpanV1(&mSpan)
+
+	pd := ptrace.NewTraces()
+	rs := pd.ResourceSpans().AppendEmpty()
+	resource := rs.Resource()
+	resource.Attributes().PutStr("service.name", "fry")
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	grpcChannelFormat.ReceivedBySvc.ForSpanV2(resource, sp)
+	sp.SetParentSpanID([8]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	grpcChannelFormat.ReceivedBySvc.ForSpanV2(resource, sp)
+
 	counters, gauges := baseMetrics.Backend.Snapshot()
 
-	assert.EqualValues(t, 1, counters["service.spans.received|debug=false|format=jaeger|svc=fry|transport=grpc"])
+	assert.EqualValues(t, 3, counters["service.spans.received|debug=false|format=jaeger|svc=fry|transport=grpc"])
 	assert.EqualValues(t, 2, counters["service.spans.received|debug=true|format=jaeger|svc=fry|transport=grpc"])
-	assert.EqualValues(t, 1, counters["service.traces.received|debug=false|format=jaeger|sampler_type=unrecognized|svc=fry|transport=grpc"])
+	assert.EqualValues(t, 2, counters["service.traces.received|debug=false|format=jaeger|sampler_type=unrecognized|svc=fry|transport=grpc"])
 	assert.EqualValues(t, 1, counters["service.traces.received|debug=true|format=jaeger|sampler_type=unrecognized|svc=fry|transport=grpc"])
 	assert.Empty(t, gauges)
 }

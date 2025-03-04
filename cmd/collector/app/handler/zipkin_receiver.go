@@ -35,7 +35,7 @@ func StartZipkinReceiver(
 		tm,
 		zipkinFactory,
 		consumer.NewTraces,
-		zipkinFactory.CreateTracesReceiver,
+		zipkinFactory.CreateTraces,
 	)
 }
 
@@ -54,25 +54,24 @@ func startZipkinReceiver(
 		cfg component.Config, nextConsumer consumer.Traces) (receiver.Traces, error),
 ) (receiver.Traces, error) {
 	receiverConfig := zipkinFactory.CreateDefaultConfig().(*zipkinreceiver.Config)
-	applyHTTPSettings(&receiverConfig.ServerConfig, &flags.HTTPOptions{
-		HostPort: options.Zipkin.HTTPHostPort,
-		TLS:      options.Zipkin.TLS,
-		CORS:     options.HTTP.CORS,
-		// TODO keepAlive not supported?
-	})
+	receiverConfig.ServerConfig = options.Zipkin.ServerConfig
 	receiverSettings := receiver.Settings{
 		TelemetrySettings: component.TelemetrySettings{
 			Logger:         logger,
 			TracerProvider: nooptrace.NewTracerProvider(),
-			MeterProvider:  noopmetric.NewMeterProvider(), // TODO wire this with jaegerlib metrics?
+			MeterProvider:  noopmetric.NewMeterProvider(),
 		},
 	}
 
-	consumerAdapter := newConsumerDelegate(logger, spanProcessor, tm)
-	// reset Zipkin spanFormat
-	consumerAdapter.batchConsumer.spanOptions.SpanFormat = processor.ZipkinSpanFormat
+	consumerHelper := &consumerHelper{
+		batchConsumer: newBatchConsumer(logger,
+			spanProcessor,
+			processor.HTTPTransport,
+			processor.ZipkinSpanFormat,
+			tm),
+	}
 
-	nextConsumer, err := newTraces(consumerAdapter.consume)
+	nextConsumer, err := newTraces(consumerHelper.consume)
 	if err != nil {
 		return nil, fmt.Errorf("could not create Zipkin consumer: %w", err)
 	}

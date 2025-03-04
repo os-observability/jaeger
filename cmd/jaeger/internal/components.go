@@ -7,6 +7,9 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/spanmetricsconnector"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckv2extension"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/jaegerreceiver"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kafkareceiver"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver"
@@ -15,19 +18,21 @@ import (
 	"go.opentelemetry.io/collector/connector/forwardconnector"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/debugexporter"
+	"go.opentelemetry.io/collector/exporter/nopexporter"
 	"go.opentelemetry.io/collector/exporter/otlpexporter"
 	"go.opentelemetry.io/collector/exporter/otlphttpexporter"
 	"go.opentelemetry.io/collector/extension"
-	"go.opentelemetry.io/collector/extension/ballastextension"
 	"go.opentelemetry.io/collector/extension/zpagesextension"
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/batchprocessor"
 	"go.opentelemetry.io/collector/processor/memorylimiterprocessor"
 	"go.opentelemetry.io/collector/receiver"
+	"go.opentelemetry.io/collector/receiver/nopreceiver"
 	"go.opentelemetry.io/collector/receiver/otlpreceiver"
 
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/exporters/storageexporter"
+	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/expvar"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerquery"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/remotesampling"
@@ -45,11 +50,11 @@ type builders struct {
 
 func defaultBuilders() builders {
 	return builders{
-		extension: extension.MakeFactoryMap,
-		receiver:  receiver.MakeFactoryMap,
-		exporter:  exporter.MakeFactoryMap,
-		processor: processor.MakeFactoryMap,
-		connector: connector.MakeFactoryMap,
+		extension: otelcol.MakeFactoryMap[extension.Factory],
+		receiver:  otelcol.MakeFactoryMap[receiver.Factory],
+		exporter:  otelcol.MakeFactoryMap[exporter.Factory],
+		processor: otelcol.MakeFactoryMap[processor.Factory],
+		connector: otelcol.MakeFactoryMap[connector.Factory],
 	}
 }
 
@@ -59,13 +64,14 @@ func (b builders) build() (otelcol.Factories, error) {
 
 	factories.Extensions, err = b.extension(
 		// standard
-		ballastextension.NewFactory(),
 		zpagesextension.NewFactory(),
+		healthcheckv2extension.NewFactory(),
 		// add-ons
 		jaegerquery.NewFactory(),
 		jaegerstorage.NewFactory(),
 		storagecleaner.NewFactory(),
 		remotesampling.NewFactory(),
+		expvar.NewFactory(),
 	)
 	if err != nil {
 		return otelcol.Factories{}, err
@@ -74,6 +80,7 @@ func (b builders) build() (otelcol.Factories, error) {
 	factories.Receivers, err = b.receiver(
 		// standard
 		otlpreceiver.NewFactory(),
+		nopreceiver.NewFactory(),
 		// add-ons
 		jaegerreceiver.NewFactory(),
 		kafkareceiver.NewFactory(),
@@ -88,6 +95,7 @@ func (b builders) build() (otelcol.Factories, error) {
 		debugexporter.NewFactory(),
 		otlpexporter.NewFactory(),
 		otlphttpexporter.NewFactory(),
+		nopexporter.NewFactory(),
 		// add-ons
 		storageexporter.NewFactory(), // generic exporter to Jaeger v1 spanstore.SpanWriter
 		kafkaexporter.NewFactory(),
@@ -102,6 +110,8 @@ func (b builders) build() (otelcol.Factories, error) {
 		// standard
 		batchprocessor.NewFactory(),
 		memorylimiterprocessor.NewFactory(),
+		tailsamplingprocessor.NewFactory(),
+		attributesprocessor.NewFactory(),
 		// add-ons
 		adaptivesampling.NewFactory(),
 	)

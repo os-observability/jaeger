@@ -1,16 +1,5 @@
 // Copyright (c) 2018 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package handler
 
@@ -23,38 +12,46 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/jaegertracing/jaeger-idl/model/v1"
+	"github.com/jaegertracing/jaeger-idl/proto-gen/api_v2"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
-	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 	"github.com/jaegertracing/jaeger/pkg/testutils"
-	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 )
+
+var _ processor.SpanProcessor = (*mockSpanProcessor)(nil)
 
 type mockSpanProcessor struct {
 	expectedError error
 	mux           sync.Mutex
 	spans         []*model.Span
+	traces        []ptrace.Traces
 	tenants       map[string]bool
 	transport     processor.InboundTransport
 	spanFormat    processor.SpanFormat
 }
 
-func (p *mockSpanProcessor) ProcessSpans(spans []*model.Span, opts processor.SpansOptions) ([]bool, error) {
+func (p *mockSpanProcessor) ProcessSpans(_ context.Context, batch processor.Batch) ([]bool, error) {
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	p.spans = append(p.spans, spans...)
-	oks := make([]bool, len(spans))
+	batch.GetSpans(func(spans []*model.Span) {
+		p.spans = append(p.spans, spans...)
+	}, func(td ptrace.Traces) {
+		p.traces = append(p.traces, td)
+	})
+	oks := make([]bool, len(p.spans))
 	if p.tenants == nil {
 		p.tenants = make(map[string]bool)
 	}
-	p.tenants[opts.Tenant] = true
-	p.transport = opts.InboundTransport
-	p.spanFormat = opts.SpanFormat
+	p.tenants[batch.GetTenant()] = true
+	p.transport = batch.GetInboundTransport()
+	p.spanFormat = batch.GetSpanFormat()
 	return oks, p.expectedError
 }
 
@@ -62,6 +59,12 @@ func (p *mockSpanProcessor) getSpans() []*model.Span {
 	p.mux.Lock()
 	defer p.mux.Unlock()
 	return p.spans
+}
+
+func (p *mockSpanProcessor) getTraces() []ptrace.Traces {
+	p.mux.Lock()
+	defer p.mux.Unlock()
+	return p.traces
 }
 
 func (p *mockSpanProcessor) getTenants() map[string]bool {
@@ -102,7 +105,7 @@ func initializeGRPCTestServer(t *testing.T, beforeServe func(s *grpc.Server)) (*
 	require.NoError(t, err)
 	go func() {
 		err := server.Serve(lis)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 	}()
 	return server, lis.Addr()
 }
@@ -114,9 +117,9 @@ func newClient(t *testing.T, addr net.Addr) (api_v2.CollectorServiceClient, *grp
 }
 
 func TestPostSpans(t *testing.T) {
-	processor := &mockSpanProcessor{}
+	proc := &mockSpanProcessor{}
 	server, addr := initializeGRPCTestServer(t, func(s *grpc.Server) {
-		handler := NewGRPCHandler(zap.NewNop(), processor, &tenancy.Manager{})
+		handler := NewGRPCHandler(zap.NewNop(), proc, &tenancy.Manager{})
 		api_v2.RegisterCollectorServiceServer(s, handler)
 	})
 	defer server.Stop()
@@ -141,17 +144,17 @@ func TestPostSpans(t *testing.T) {
 			Batch: test.batch,
 		})
 		require.NoError(t, err)
-		got := processor.getSpans()
+		got := proc.getSpans()
 		require.Equal(t, len(test.batch.GetSpans()), len(got))
 		assert.Equal(t, test.expected, got)
-		processor.reset()
+		proc.reset()
 	}
 }
 
 func TestGRPCCompressionEnabled(t *testing.T) {
-	processor := &mockSpanProcessor{}
+	proc := &mockSpanProcessor{}
 	server, addr := initializeGRPCTestServer(t, func(s *grpc.Server) {
-		handler := NewGRPCHandler(zap.NewNop(), processor, &tenancy.Manager{})
+		handler := NewGRPCHandler(zap.NewNop(), proc, &tenancy.Manager{})
 		api_v2.RegisterCollectorServiceServer(s, handler)
 	})
 	defer server.Stop()
@@ -204,9 +207,8 @@ func TestPostSpansWithError(t *testing.T) {
 					},
 				},
 			})
-			require.Error(t, err)
+			require.ErrorContains(t, err, test.expectedError)
 			require.Nil(t, r)
-			assert.Contains(t, err.Error(), test.expectedError)
 			assert.Contains(t, logBuf.String(), test.expectedLog)
 			assert.Len(t, processor.getSpans(), 1)
 		})
@@ -225,9 +227,9 @@ func TestPostTenantedSpans(t *testing.T) {
 	tenantHeader := "x-tenant"
 	dummyTenant := "grpc-test-tenant"
 
-	processor := &mockSpanProcessor{}
+	proc := &mockSpanProcessor{}
 	server, addr := initializeGRPCTestServer(t, func(s *grpc.Server) {
-		handler := NewGRPCHandler(zap.NewNop(), processor,
+		handler := NewGRPCHandler(zap.NewNop(), proc,
 			tenancy.NewManager(&tenancy.Options{
 				Enabled: true,
 				Header:  tenantHeader,
@@ -307,9 +309,9 @@ func TestPostTenantedSpans(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			assert.Equal(t, test.expected, processor.getSpans())
-			assert.Equal(t, test.expectedTenants, processor.getTenants())
-			processor.reset()
+			assert.Equal(t, test.expected, proc.getSpans())
+			assert.Equal(t, test.expectedTenants, proc.getTenants())
+			proc.reset()
 		})
 	}
 }
@@ -362,8 +364,8 @@ func TestGetTenant(t *testing.T) {
 		},
 	}
 
-	processor := &mockSpanProcessor{}
-	handler := NewGRPCHandler(zap.NewNop(), processor,
+	proc := &mockSpanProcessor{}
+	handler := NewGRPCHandler(zap.NewNop(), proc,
 		tenancy.NewManager(&tenancy.Options{
 			Enabled: true,
 			Header:  tenantHeader,
@@ -408,7 +410,6 @@ func TestBatchConsumer(t *testing.T) {
 
 	logger, _ := testutils.NewLogger()
 	for _, tc := range tests {
-		tc := tc
 		t.Parallel()
 		t.Run(tc.name, func(t *testing.T) {
 			processor := mockSpanProcessor{}

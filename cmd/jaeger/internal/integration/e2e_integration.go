@@ -11,8 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/integration/storagecleaner"
-	"github.com/jaegertracing/jaeger/plugin/storage/integration"
+	"github.com/jaegertracing/jaeger/internal/storage/integration"
 	"github.com/jaegertracing/jaeger/ports"
 )
 
@@ -39,9 +39,16 @@ const otlpPort = 4317
 type E2EStorageIntegration struct {
 	integration.StorageIntegration
 
-	SkipStorageCleaner  bool
-	ConfigFile          string
-	HealthCheckEndpoint string
+	SkipStorageCleaner bool
+	ConfigFile         string
+	BinaryName         string
+	HealthCheckPort    int // overridable for Kafka tests which run two binaries and need different ports
+
+	// EnvVarOverrides contains a map of environment variables to set.
+	// The key in the map is the environment variable to override and the value
+	// is the value of the environment variable to set.
+	// These variables are set upon initialization and are unset upon cleanup.
+	EnvVarOverrides map[string]string
 }
 
 // e2eInitialize starts the Jaeger-v2 collector with the provided config file,
@@ -49,112 +56,73 @@ type E2EStorageIntegration struct {
 // This function should be called before any of the tests start.
 func (s *E2EStorageIntegration) e2eInitialize(t *testing.T, storage string) {
 	logger := zaptest.NewLogger(t, zaptest.WrapOptions(zap.AddCaller()))
+	if s.BinaryName == "" {
+		s.BinaryName = "jaeger-v2"
+	}
 	configFile := s.ConfigFile
 	if !s.SkipStorageCleaner {
 		configFile = createStorageCleanerConfig(t, s.ConfigFile, storage)
 	}
-
 	configFile, err := filepath.Abs(configFile)
 	require.NoError(t, err, "Failed to get absolute path of the config file")
 	require.FileExists(t, configFile, "Config file does not exist at the resolved path")
 
-	t.Logf("Starting Jaeger-v2 in the background with config file %s", configFile)
-
-	outFile, err := os.OpenFile(
-		filepath.Join(t.TempDir(), "jaeger_output_logs.txt"),
-		os.O_CREATE|os.O_WRONLY,
-		os.ModePerm,
-	)
+	t.Logf("Starting %s in the background with config file %s", s.BinaryName, configFile)
+	cfgBytes, err := os.ReadFile(configFile)
 	require.NoError(t, err)
-	t.Logf("Writing the Jaeger-v2 output logs into %s", outFile.Name())
+	t.Logf("Config file content:\n%s", string(cfgBytes))
 
-	errFile, err := os.OpenFile(
-		filepath.Join(t.TempDir(), "jaeger_error_logs.txt"),
-		os.O_CREATE|os.O_WRONLY,
-		os.ModePerm,
-	)
-	require.NoError(t, err)
-	t.Logf("Writing the Jaeger-v2 error logs into %s", errFile.Name())
-
-	cmd := exec.Cmd{
-		Path: "./cmd/jaeger/jaeger",
-		Args: []string{"jaeger", "--config", configFile},
-		// Change the working directory to the root of this project
-		// since the binary config file jaeger_query's ui_config points to
-		// "./cmd/jaeger/config-ui.json"
-		Dir:    "../../../..",
-		Stdout: outFile,
-		Stderr: errFile,
+	envVars := []string{"OTEL_TRACES_SAMPLER=always_off"}
+	for key, value := range s.EnvVarOverrides {
+		envVars = append(envVars, fmt.Sprintf("%s=%s", key, value))
 	}
-	t.Logf("Running command: %v", cmd.Args)
-	require.NoError(t, cmd.Start())
 
-	// Wait for the binary to start and become ready to serve requests.
-	healthCheckEndpoint := s.HealthCheckEndpoint
-	if healthCheckEndpoint == "" {
-		healthCheckEndpoint = fmt.Sprintf("http://localhost:%d/", ports.QueryHTTP)
+	cmd := Binary{
+		Name:            s.BinaryName,
+		HealthCheckPort: s.HealthCheckPort,
+		Cmd: exec.Cmd{
+			Path: "./cmd/jaeger/jaeger",
+			Args: []string{"jaeger", "--config", configFile},
+			// Change the working directory to the root of this project
+			// since the binary config file jaeger_query's ui.config_file points to
+			// "./cmd/jaeger/config-ui.json"
+			Dir: "../../../..",
+			Env: envVars,
+		},
 	}
-	require.Eventually(t, func() bool {
-		t.Logf("Checking if Jaeger-v2 is available on %s", healthCheckEndpoint)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthCheckEndpoint, nil)
-		if err != nil {
-			t.Logf("HTTP request creation failed: %v", err)
-			return false
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Logf("HTTP request failed: %v", err)
-			return false
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 60*time.Second, 3*time.Second, "Jaeger-v2 did not start")
-	t.Log("Jaeger-v2 is ready")
-	t.Cleanup(func() {
-		if err := cmd.Process.Kill(); err != nil {
-			t.Errorf("Failed to kill Jaeger-v2 process: %v", err)
-		}
-		if t.Failed() {
-			// A Github Actions special annotation to create a foldable section
-			// in the Github runner output.
-			// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
-			fmt.Println("::group::🚧 🚧 🚧 Jaeger-v2 binary logs")
-			outLogs, err := os.ReadFile(outFile.Name())
-			if err != nil {
-				t.Errorf("Failed to read output logs: %v", err)
-			} else {
-				fmt.Printf("🚧 🚧 🚧 Jaeger-v2 output logs:\n%s", outLogs)
-			}
+	cmd.Start(t)
 
-			errLogs, err := os.ReadFile(errFile.Name())
-			if err != nil {
-				t.Errorf("Failed to read error logs: %v", err)
-			} else {
-				fmt.Printf("🚧 🚧 🚧 Jaeger-v2 error logs:\n%s", errLogs)
-			}
-			// End of Github Actions foldable section annotation.
-			fmt.Println("::endgroup::")
-		}
-	})
-
-	s.SpanWriter, err = createSpanWriter(logger, otlpPort)
+	s.TraceWriter, err = createTraceWriter(logger, otlpPort)
 	require.NoError(t, err)
-	s.SpanReader, err = createSpanReader(logger, ports.QueryGRPC)
+
+	s.TraceReader, err = createTraceReader(logger, ports.QueryGRPC)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		// Call e2eCleanUp to close the SpanReader and SpanWriter gRPC connection.
-		s.e2eCleanUp(t)
+		scrapeMetrics(t, storage)
+		require.NoError(t, s.TraceReader.(io.Closer).Close())
+		require.NoError(t, s.TraceWriter.(io.Closer).Close())
 	})
 }
 
-// e2eCleanUp closes the SpanReader and SpanWriter gRPC connection.
-// This function should be called after all the tests are finished.
-func (s *E2EStorageIntegration) e2eCleanUp(t *testing.T) {
-	require.NoError(t, s.SpanReader.(io.Closer).Close())
-	require.NoError(t, s.SpanWriter.(io.Closer).Close())
+func scrapeMetrics(t *testing.T, storage string) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost:8888/metrics", nil)
+	require.NoError(t, err)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	outputDir := "../../../../.metrics"
+	require.NoError(t, os.MkdirAll(outputDir, os.ModePerm))
+
+	metricsFile, err := os.Create(fmt.Sprintf("%s/metrics_snapshot_%v.txt", outputDir, storage))
+	require.NoError(t, err)
+	defer metricsFile.Close()
+
+	_, err = io.Copy(metricsFile, resp.Body)
+	require.NoError(t, err)
 }
 
 func createStorageCleanerConfig(t *testing.T, configFile string, storage string) string {
@@ -174,7 +142,9 @@ func createStorageCleanerConfig(t *testing.T, configFile string, storage string)
 	extensions := extensionsAny.(map[string]any)
 	queryAny, ok := extensions["jaeger_query"]
 	require.True(t, ok)
-	traceStorageAny, ok := queryAny.(map[string]any)["trace_storage"]
+	storageAny, ok := queryAny.(map[string]any)["storage"]
+	require.True(t, ok)
+	traceStorageAny, ok := storageAny.(map[string]any)["traces"]
 	require.True(t, ok)
 	traceStorage := traceStorageAny.(string)
 	extensions["storage_cleaner"] = map[string]string{"trace_storage": traceStorage}
@@ -201,10 +171,13 @@ func createStorageCleanerConfig(t *testing.T, configFile string, storage string)
 
 	newData, err := yaml.Marshal(config)
 	require.NoError(t, err)
-	tempFile := filepath.Join(t.TempDir(), "storageCleaner_config.yaml")
+	fileExt := filepath.Ext(filepath.Base(configFile))
+	fileName := strings.TrimSuffix(filepath.Base(configFile), fileExt)
+	tempFile := filepath.Join(t.TempDir(), fileName+"_with_storageCleaner"+fileExt)
 	err = os.WriteFile(tempFile, newData, 0o600)
 	require.NoError(t, err)
 
+	t.Logf("Transformed configuration file %s to %s", configFile, tempFile)
 	return tempFile
 }
 

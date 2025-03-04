@@ -1,16 +1,5 @@
 // Copyright (c) 2020 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package flags
 
@@ -37,9 +26,9 @@ func TestCollectorOptionsWithFlags_CheckHostPort(t *testing.T) {
 	_, err := c.InitFromViper(v, zap.NewNop())
 	require.NoError(t, err)
 
-	assert.Equal(t, ":5678", c.HTTP.HostPort)
-	assert.Equal(t, ":1234", c.GRPC.HostPort)
-	assert.Equal(t, ":3456", c.Zipkin.HTTPHostPort)
+	assert.Equal(t, ":5678", c.HTTP.Endpoint)
+	assert.Equal(t, ":1234", c.GRPC.NetAddr.Endpoint)
+	assert.Equal(t, ":3456", c.Zipkin.Endpoint)
 }
 
 func TestCollectorOptionsWithFlags_CheckFullHostPort(t *testing.T) {
@@ -53,9 +42,9 @@ func TestCollectorOptionsWithFlags_CheckFullHostPort(t *testing.T) {
 	_, err := c.InitFromViper(v, zap.NewNop())
 	require.NoError(t, err)
 
-	assert.Equal(t, ":5678", c.HTTP.HostPort)
-	assert.Equal(t, "127.0.0.1:1234", c.GRPC.HostPort)
-	assert.Equal(t, "0.0.0.0:3456", c.Zipkin.HTTPHostPort)
+	assert.Equal(t, ":5678", c.HTTP.Endpoint)
+	assert.Equal(t, "127.0.0.1:1234", c.GRPC.NetAddr.Endpoint)
+	assert.Equal(t, "0.0.0.0:3456", c.Zipkin.Endpoint)
 }
 
 func TestCollectorOptionsWithFailedTLSFlags(t *testing.T) {
@@ -76,37 +65,7 @@ func TestCollectorOptionsWithFailedTLSFlags(t *testing.T) {
 			})
 			require.NoError(t, err)
 			_, err = c.InitFromViper(v, zap.NewNop())
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "failed to parse")
-		})
-	}
-}
-
-func TestCollectorOptionsWithFlags_CheckTLSReloadInterval(t *testing.T) {
-	prefixes := []string{
-		"--collector.http",
-		"--collector.grpc",
-		"--collector.zipkin",
-		"--collector.otlp.http",
-		"--collector.otlp.grpc",
-	}
-	otlpPrefixes := map[string]struct{}{
-		"--collector.otlp.http": {},
-		"--collector.otlp.grpc": {},
-	}
-	for _, prefix := range prefixes {
-		t.Run(prefix, func(t *testing.T) {
-			_, command := config.Viperize(AddFlags)
-			err := command.ParseFlags([]string{
-				prefix + ".tls.enabled=true",
-				prefix + ".tls.reload-interval=24h",
-			})
-			if _, ok := otlpPrefixes[prefix]; !ok {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "unknown flag")
-			} else {
-				require.NoError(t, err)
-			}
+			assert.ErrorContains(t, err, "failed to parse")
 		})
 	}
 }
@@ -120,7 +79,7 @@ func TestCollectorOptionsWithFlags_CheckMaxReceiveMessageLength(t *testing.T) {
 	_, err := c.InitFromViper(v, zap.NewNop())
 	require.NoError(t, err)
 
-	assert.Equal(t, 8388608, c.GRPC.MaxReceiveMessageLength)
+	assert.Equal(t, 8, c.GRPC.MaxRecvMsgSizeMiB)
 }
 
 func TestCollectorOptionsWithFlags_CheckMaxConnectionAge(t *testing.T) {
@@ -136,8 +95,8 @@ func TestCollectorOptionsWithFlags_CheckMaxConnectionAge(t *testing.T) {
 	_, err := c.InitFromViper(v, zap.NewNop())
 	require.NoError(t, err)
 
-	assert.Equal(t, 5*time.Minute, c.GRPC.MaxConnectionAge)
-	assert.Equal(t, time.Minute, c.GRPC.MaxConnectionAgeGrace)
+	assert.Equal(t, 5*time.Minute, c.GRPC.Keepalive.ServerParameters.MaxConnectionAge)
+	assert.Equal(t, time.Minute, c.GRPC.Keepalive.ServerParameters.MaxConnectionAgeGrace)
 	assert.Equal(t, 5*time.Minute, c.HTTP.IdleTimeout)
 	assert.Equal(t, 6*time.Minute, c.HTTP.ReadTimeout)
 	assert.Equal(t, 5*time.Second, c.HTTP.ReadHeaderTimeout)
@@ -149,7 +108,7 @@ func TestCollectorOptionsWithFlags_CheckNoTenancy(t *testing.T) {
 	command.ParseFlags([]string{})
 	c.InitFromViper(v, zap.NewNop())
 
-	assert.False(t, c.GRPC.Tenancy.Enabled)
+	assert.False(t, c.Tenancy.Enabled)
 }
 
 func TestCollectorOptionsWithFlags_CheckSimpleTenancy(t *testing.T) {
@@ -160,8 +119,8 @@ func TestCollectorOptionsWithFlags_CheckSimpleTenancy(t *testing.T) {
 	})
 	c.InitFromViper(v, zap.NewNop())
 
-	assert.True(t, c.GRPC.Tenancy.Enabled)
-	assert.Equal(t, "x-tenant", c.GRPC.Tenancy.Header)
+	assert.True(t, c.Tenancy.Enabled)
+	assert.Equal(t, "x-tenant", c.Tenancy.Header)
 }
 
 func TestCollectorOptionsWithFlags_CheckFullTenancy(t *testing.T) {
@@ -174,9 +133,9 @@ func TestCollectorOptionsWithFlags_CheckFullTenancy(t *testing.T) {
 	})
 	c.InitFromViper(v, zap.NewNop())
 
-	assert.True(t, c.GRPC.Tenancy.Enabled)
-	assert.Equal(t, "custom-tenant-header", c.GRPC.Tenancy.Header)
-	assert.Equal(t, []string{"acme", "hardware-store"}, c.GRPC.Tenancy.Tenants)
+	assert.True(t, c.Tenancy.Enabled)
+	assert.Equal(t, "custom-tenant-header", c.Tenancy.Header)
+	assert.Equal(t, []string{"acme", "hardware-store"}, c.Tenancy.Tenants)
 }
 
 func TestCollectorOptionsWithFlags_CheckZipkinKeepAlive(t *testing.T) {

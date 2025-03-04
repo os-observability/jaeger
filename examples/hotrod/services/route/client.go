@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package route
 
@@ -49,9 +38,9 @@ func (c *Client) FindRoute(ctx context.Context, pickup, dropoff string) (*Route,
 	v := url.Values{}
 	v.Set("pickup", pickup)
 	v.Set("dropoff", dropoff)
-	url := "http://" + c.hostPort + "/route?" + v.Encode()
+	routeURL := "http://" + c.hostPort + "/route?" + v.Encode()
 	var route Route
-	if err := c.client.GetJSON(ctx, "/route", url, &route); err != nil {
+	if err := c.client.GetJSON(ctx, "/route", routeURL, &route); err != nil {
 		c.logger.For(ctx).Error("Error getting route", zap.Error(err))
 		return nil, err
 	}

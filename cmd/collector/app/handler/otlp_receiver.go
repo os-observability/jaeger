@@ -1,16 +1,5 @@
 // Copyright (c) 2022 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package handler
 
@@ -18,14 +7,12 @@ import (
 	"context"
 	"fmt"
 
-	otlp2jaeger "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configgrpc"
-	"go.opentelemetry.io/collector/config/confighttp"
-	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/component/componentstatus"
+	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/extension"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pipeline"
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/otlpreceiver"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
@@ -34,8 +21,6 @@ import (
 
 	"github.com/jaegertracing/jaeger/cmd/collector/app/flags"
 	"github.com/jaegertracing/jaeger/cmd/collector/app/processor"
-	"github.com/jaegertracing/jaeger/model"
-	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 	"github.com/jaegertracing/jaeger/pkg/tenancy"
 )
 
@@ -51,7 +36,7 @@ func StartOTLPReceiver(options *flags.CollectorOptions, logger *zap.Logger, span
 		tm,
 		otlpFactory,
 		consumer.NewTraces,
-		otlpFactory.CreateTracesReceiver,
+		otlpFactory.CreateTraces,
 	)
 }
 
@@ -70,9 +55,10 @@ func startOTLPReceiver(
 		cfg component.Config, nextConsumer consumer.Traces) (receiver.Traces, error),
 ) (receiver.Traces, error) {
 	otlpReceiverConfig := otlpFactory.CreateDefaultConfig().(*otlpreceiver.Config)
-	applyGRPCSettings(otlpReceiverConfig.GRPC, &options.OTLP.GRPC)
-	applyHTTPSettings(otlpReceiverConfig.HTTP.ServerConfig, &options.OTLP.HTTP)
-	statusReporter := func(ev *component.StatusEvent) {
+	otlpReceiverConfig.GRPC = &options.OTLP.GRPC
+	otlpReceiverConfig.GRPC.NetAddr.Transport = confignet.TransportTypeTCP
+	otlpReceiverConfig.HTTP.ServerConfig = &options.OTLP.HTTP
+	statusReporter := func(ev *componentstatus.Event) {
 		// TODO this could be wired into changing healthcheck.HealthCheck
 		logger.Info("OTLP receiver status change", zap.Stringer("status", ev.Status()))
 	}
@@ -80,14 +66,18 @@ func startOTLPReceiver(
 		TelemetrySettings: component.TelemetrySettings{
 			Logger:         logger,
 			TracerProvider: nooptrace.NewTracerProvider(),
-			MeterProvider:  noopmetric.NewMeterProvider(), // TODO wire this with jaegerlib metrics?
-			ReportStatus:   statusReporter,
+			MeterProvider:  noopmetric.NewMeterProvider(),
 		},
 	}
 
-	otlpConsumer := newConsumerDelegate(logger, spanProcessor, tm)
-	// the following two constructors never return errors given non-nil arguments, so we ignore errors
-	nextConsumer, err := newTraces(otlpConsumer.consume)
+	consumerHelper := &consumerHelper{
+		batchConsumer: newBatchConsumer(logger,
+			spanProcessor,
+			processor.UnknownTransport, // could be gRPC or HTTP
+			processor.OTLPSpanFormat,
+			tm),
+	}
+	nextConsumer, err := newTraces(consumerHelper.consume)
 	if err != nil {
 		return nil, fmt.Errorf("could not create the OTLP consumer: %w", err)
 	}
@@ -100,107 +90,58 @@ func startOTLPReceiver(
 	if err != nil {
 		return nil, fmt.Errorf("could not create the OTLP receiver: %w", err)
 	}
-	if err := otlpReceiver.Start(context.Background(), &otelHost{logger: logger}); err != nil {
+	if err := otlpReceiver.Start(context.Background(), &otelHost{logger: logger, reportFunc: statusReporter}); err != nil {
 		return nil, fmt.Errorf("could not start the OTLP receiver: %w", err)
 	}
 	return otlpReceiver, nil
 }
 
-func applyGRPCSettings(cfg *configgrpc.ServerConfig, opts *flags.GRPCOptions) {
-	if opts.HostPort != "" {
-		cfg.NetAddr.Endpoint = opts.HostPort
-	}
-	if opts.TLS.Enabled {
-		cfg.TLSSetting = applyTLSSettings(&opts.TLS)
-	}
-	if opts.MaxReceiveMessageLength > 0 {
-		cfg.MaxRecvMsgSizeMiB = uint64(opts.MaxReceiveMessageLength / (1024 * 1024))
-	}
-	if opts.MaxConnectionAge != 0 || opts.MaxConnectionAgeGrace != 0 {
-		cfg.Keepalive = &configgrpc.KeepaliveServerConfig{
-			ServerParameters: &configgrpc.KeepaliveServerParameters{
-				MaxConnectionAge:      opts.MaxConnectionAge,
-				MaxConnectionAgeGrace: opts.MaxConnectionAgeGrace,
-			},
-		}
-	}
+type consumerHelper struct {
+	batchConsumer
 }
 
-func applyHTTPSettings(cfg *confighttp.ServerConfig, opts *flags.HTTPOptions) {
-	if opts.HostPort != "" {
-		cfg.Endpoint = opts.HostPort
-	}
-	if opts.TLS.Enabled {
-		cfg.TLSSetting = applyTLSSettings(&opts.TLS)
-	}
-
-	cfg.CORS = &confighttp.CORSConfig{
-		AllowedOrigins: opts.CORS.AllowedOrigins,
-		AllowedHeaders: opts.CORS.AllowedHeaders,
-	}
-}
-
-func applyTLSSettings(opts *tlscfg.Options) *configtls.ServerConfig {
-	return &configtls.ServerConfig{
-		Config: configtls.Config{
-			CAFile:         opts.CAPath,
-			CertFile:       opts.CertPath,
-			KeyFile:        opts.KeyPath,
-			MinVersion:     opts.MinVersion,
-			MaxVersion:     opts.MaxVersion,
-			ReloadInterval: opts.ReloadInterval,
-		},
-		ClientCAFile: opts.ClientCAPath,
-	}
-}
-
-func newConsumerDelegate(logger *zap.Logger, spanProcessor processor.SpanProcessor, tm *tenancy.Manager) *consumerDelegate {
-	return &consumerDelegate{
-		batchConsumer: newBatchConsumer(logger,
-			spanProcessor,
-			processor.UnknownTransport, // could be gRPC or HTTP
-			processor.OTLPSpanFormat,
-			tm),
-		protoFromTraces: otlp2jaeger.ProtoFromTraces,
-	}
-}
-
-type consumerDelegate struct {
-	batchConsumer   batchConsumer
-	protoFromTraces func(td ptrace.Traces) ([]*model.Batch, error)
-}
-
-func (c *consumerDelegate) consume(ctx context.Context, td ptrace.Traces) error {
-	batches, err := c.protoFromTraces(td)
+func (ch *consumerHelper) consume(ctx context.Context, td ptrace.Traces) error {
+	tenant, err := ch.validateTenant(ctx)
 	if err != nil {
+		ch.logger.Debug("rejecting spans (tenancy)", zap.Error(err))
 		return err
 	}
-	for _, batch := range batches {
-		err := c.batchConsumer.consume(ctx, batch)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = ch.spanProcessor.ProcessSpans(ctx, processor.SpansV2{
+		Traces: td,
+		Details: processor.Details{
+			InboundTransport: ch.spanOptions.InboundTransport,
+			SpanFormat:       ch.spanOptions.SpanFormat,
+			Tenant:           tenant,
+		},
+	})
+	return err
 }
+
+var _ componentstatus.Reporter = (*otelHost)(nil)
 
 // otelHost is a mostly no-op implementation of OTEL component.Host
 type otelHost struct {
 	logger *zap.Logger
+
+	reportFunc func(event *componentstatus.Event)
 }
 
 func (h *otelHost) ReportFatalError(err error) {
 	h.logger.Fatal("OTLP receiver error", zap.Error(err))
 }
 
-func (*otelHost) GetFactory(_ component.Kind, _ component.Type) component.Factory {
+func (*otelHost) GetFactory(_ component.Kind, _ pipeline.Signal) component.Factory {
 	return nil
 }
 
-func (*otelHost) GetExtensions() map[component.ID]extension.Extension {
+func (*otelHost) GetExtensions() map[component.ID]component.Component {
 	return nil
 }
 
-func (*otelHost) GetExporters() map[component.DataType]map[component.ID]component.Component {
+func (*otelHost) GetExporters() map[pipeline.Signal]map[component.ID]component.Component {
 	return nil
+}
+
+func (h *otelHost) Report(event *componentstatus.Event) {
+	h.reportFunc(event)
 }

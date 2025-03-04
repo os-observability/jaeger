@@ -1,16 +1,5 @@
 // Copyright (c) 2020 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package status
 
@@ -41,7 +30,7 @@ func Command(v *viper.Viper, adminPort int) *cobra.Command {
 			url := convert(v.GetString(statusHTTPHostPort))
 			ctx, cx := context.WithTimeout(context.Background(), time.Second)
 			defer cx()
-			req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return err
@@ -69,7 +58,7 @@ func flags(flagSet *flag.FlagSet, adminPort int) *flag.FlagSet {
 
 func convert(httpHostPort string) string {
 	if strings.HasPrefix(httpHostPort, ":") {
-		return fmt.Sprintf("http://127.0.0.1%s", httpHostPort)
+		return "http://127.0.0.1" + httpHostPort
 	}
-	return fmt.Sprintf("http://%s", httpHostPort)
+	return "http://" + httpHostPort
 }

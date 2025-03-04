@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package frontend
 
@@ -71,13 +60,13 @@ func newBestETA(tracer trace.TracerProvider, logger log.Factory, options ConfigO
 }
 
 func (eta *bestETA) Get(ctx context.Context, customerID int) (*Response, error) {
-	customer, err := eta.customer.Get(ctx, customerID)
+	cust, err := eta.customer.Get(ctx, customerID)
 	if err != nil {
 		return nil, err
 	}
-	eta.logger.For(ctx).Info("Found customer", zap.Any("customer", customer))
+	eta.logger.For(ctx).Info("Found customer", zap.Any("customer", cust))
 
-	m, err := baggage.NewMember("customer", customer.Name)
+	m, err := baggage.NewMember("customer", cust.Name)
 	if err != nil {
 		eta.logger.For(ctx).Error("cannot create baggage member", zap.Error(err))
 	}
@@ -88,13 +77,13 @@ func (eta *bestETA) Get(ctx context.Context, customerID int) (*Response, error) 
 	}
 	ctx = baggage.ContextWithBaggage(ctx, bag)
 
-	drivers, err := eta.driver.FindNearest(ctx, customer.Location)
+	drivers, err := eta.driver.FindNearest(ctx, cust.Location)
 	if err != nil {
 		return nil, err
 	}
 	eta.logger.For(ctx).Info("Found drivers", zap.Any("drivers", drivers))
 
-	results := eta.getRoutes(ctx, customer, drivers)
+	results := eta.getRoutes(ctx, cust, drivers)
 	eta.logger.For(ctx).Info("Found routes", zap.Any("routes", results))
 
 	resp := &Response{ETA: math.MaxInt64}
@@ -122,19 +111,19 @@ type routeResult struct {
 }
 
 // getRoutes calls Route service for each (customer, driver) pair
-func (eta *bestETA) getRoutes(ctx context.Context, customer *customer.Customer, drivers []driver.Driver) []routeResult {
+func (eta *bestETA) getRoutes(ctx context.Context, cust *customer.Customer, drivers []driver.Driver) []routeResult {
 	results := make([]routeResult, 0, len(drivers))
 	wg := sync.WaitGroup{}
 	routesLock := sync.Mutex{}
 	for _, dd := range drivers {
 		wg.Add(1)
-		driver := dd // capture loop var
+		drv := dd // capture loop var
 		// Use worker pool to (potentially) execute requests in parallel
 		eta.pool.Execute(func() {
-			route, err := eta.route.FindRoute(ctx, driver.Location, customer.Location)
+			route, err := eta.route.FindRoute(ctx, drv.Location, cust.Location)
 			routesLock.Lock()
 			results = append(results, routeResult{
-				driver: driver.DriverID,
+				driver: drv.DriverID,
 				route:  route,
 				err:    err,
 			})

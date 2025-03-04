@@ -1,16 +1,5 @@
 // Copyright (c) 2018 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package offset
 
@@ -30,8 +19,8 @@ func insert(list *ConcurrentList, offsets ...int64) {
 
 func TestInsert(t *testing.T) {
 	for _, testCase := range generatePermutations([]int64{1, 2, 3}) {
-		min, toInsert := extractMin(testCase)
-		s := newConcurrentList(min)
+		m, toInsert := extractMin(testCase)
+		s := newConcurrentList(m)
 		insert(s, toInsert...)
 		assert.ElementsMatch(t, testCase, s.offsets)
 	}
@@ -73,8 +62,8 @@ func TestGetHighestAndReset(t *testing.T) {
 	for _, testCase := range testCases {
 		for _, input := range generatePermutations(testCase.input) {
 			t.Run(fmt.Sprintf("%v", input), func(t *testing.T) {
-				min, input := extractMin(input)
-				s := newConcurrentList(min)
+				m, input := extractMin(input)
+				s := newConcurrentList(m)
 				insert(s, input...)
 				actualOffset := s.setToHighestContiguous()
 				assert.ElementsMatch(t, testCase.expectedList, s.offsets)

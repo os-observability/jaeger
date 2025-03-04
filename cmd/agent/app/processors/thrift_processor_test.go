@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package processors
 
@@ -28,6 +17,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/agent"
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/zipkincore"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/reporter"
 	grpcrep "github.com/jaegertracing/jaeger/cmd/agent/app/reporter/grpc"
 	"github.com/jaegertracing/jaeger/cmd/agent/app/servers"
@@ -35,9 +27,6 @@ import (
 	"github.com/jaegertracing/jaeger/cmd/agent/app/testutils"
 	"github.com/jaegertracing/jaeger/internal/metricstest"
 	"github.com/jaegertracing/jaeger/pkg/metrics"
-	"github.com/jaegertracing/jaeger/thrift-gen/agent"
-	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
-	"github.com/jaegertracing/jaeger/thrift-gen/zipkincore"
 )
 
 // TODO make these tests faster, they take almost 4 seconds
@@ -86,8 +75,8 @@ func initCollectorAndReporter(t *testing.T) (*metricstest.Factory, *testutils.Gr
 	require.NoError(t, err)
 	rep := grpcrep.NewReporter(conn, map[string]string{}, zaptest.NewLogger(t))
 	metricsFactory := metricstest.NewFactory(0)
-	reporter := reporter.WrapWithMetrics(rep, metricsFactory)
-	return metricsFactory, grpcCollector, reporter, conn
+	metricsReporter := reporter.WrapWithMetrics(rep, metricsFactory)
+	return metricsFactory, grpcCollector, metricsReporter, conn
 }
 
 func TestNewThriftProcessor_ZeroCount(t *testing.T) {
@@ -96,11 +85,11 @@ func TestNewThriftProcessor_ZeroCount(t *testing.T) {
 }
 
 func TestProcessorWithCompactZipkin(t *testing.T) {
-	metricsFactory, collector, reporter, conn := initCollectorAndReporter(t)
+	metricsFactory, collector, metricsReporter, conn := initCollectorAndReporter(t)
 	defer conn.Close()
 	defer collector.Close()
 
-	hostPort, processor := createProcessor(t, metricsFactory, compactFactory, agent.NewAgentProcessor(reporter))
+	hostPort, processor := createProcessor(t, metricsFactory, compactFactory, agent.NewAgentProcessor(metricsReporter))
 	defer processor.Stop()
 
 	client, clientCloser, err := testutils.NewZipkinThriftUDPClient(hostPort)

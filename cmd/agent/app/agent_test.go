@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package app
 
@@ -55,9 +44,7 @@ func TestAgentSamplingEndpoint(t *testing.T) {
 			}
 			select {
 			case err := <-errorch:
-				if err != nil {
-					t.Fatalf("error from agent: %s", err)
-				}
+				require.NoError(t, err, "error from agent")
 				break wait_loop
 			default:
 				time.Sleep(time.Millisecond)
@@ -166,9 +153,7 @@ func TestStartStopRace(t *testing.T) {
 	// Before the bug was fixed this test was failing as expected when
 	// run with -race flag.
 
-	if err := agent.Run(); err != nil {
-		t.Fatalf("error from agent.Run(): %s", err)
-	}
+	require.NoError(t, agent.Run())
 
 	t.Log("stopping agent")
 	agent.Stop()
@@ -203,9 +188,7 @@ func TestStartStopWithSocketBufferSet(t *testing.T) {
 	agent, err := cfg.CreateAgent(fakeCollectorProxy{}, zap.NewNop(), metricsFactory)
 	require.NoError(t, err)
 
-	if err := agent.Run(); err != nil {
-		t.Fatalf("error from agent.Run(): %s", err)
-	}
+	require.NoError(t, agent.Run())
 
 	t.Log("stopping agent")
 	agent.Stop()

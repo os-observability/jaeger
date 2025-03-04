@@ -1,24 +1,13 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package handler
 
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,10 +22,13 @@ import (
 	jaegerClient "github.com/uber/jaeger-client-go"
 	"github.com/uber/jaeger-client-go/transport"
 
-	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
+	"github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
 )
 
-var httpClient = &http.Client{Timeout: 2 * time.Second}
+var (
+	httpClient                      = &http.Client{Timeout: 2 * time.Second}
+	_          JaegerBatchesHandler = (*mockJaegerHandler)(nil)
+)
 
 type mockJaegerHandler struct {
 	err     error
@@ -44,7 +36,7 @@ type mockJaegerHandler struct {
 	batches []*jaeger.Batch
 }
 
-func (p *mockJaegerHandler) SubmitBatches(batches []*jaeger.Batch, _ SubmitBatchOptions) ([]*jaeger.BatchSubmitResponse, error) {
+func (p *mockJaegerHandler) SubmitBatches(_ context.Context, batches []*jaeger.Batch, _ SubmitBatchOptions) ([]*jaeger.BatchSubmitResponse, error) {
 	p.mux.Lock()
 	defer p.mux.Unlock()
 	p.batches = append(p.batches, batches...)
@@ -90,7 +82,7 @@ func TestThriftFormat(t *testing.T) {
 	assert.EqualValues(t, http.StatusAccepted, statusCode)
 	assert.EqualValues(t, "", resBodyStr)
 
-	handler.jaegerBatchesHandler.(*mockJaegerHandler).err = fmt.Errorf("Bad times ahead")
+	handler.jaegerBatchesHandler.(*mockJaegerHandler).err = errors.New("Bad times ahead")
 	statusCode, resBodyStr, err = postBytes("application/vnd.apache.thrift.binary", server.URL+`/api/traces`, someBytes)
 	require.NoError(t, err)
 	assert.EqualValues(t, http.StatusInternalServerError, statusCode)
@@ -172,7 +164,7 @@ func TestCannotReadBodyFromRequest(t *testing.T) {
 type errReader struct{}
 
 func (*errReader) Read([]byte) (int, error) {
-	return 0, fmt.Errorf("Simulated error reading body")
+	return 0, errors.New("Simulated error reading body")
 }
 
 type dummyResponseWriter struct {

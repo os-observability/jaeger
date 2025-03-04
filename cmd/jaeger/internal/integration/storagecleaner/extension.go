@@ -12,16 +12,17 @@ import (
 
 	"github.com/gorilla/mux"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componentstatus"
 	"go.opentelemetry.io/collector/extension"
+	"go.opentelemetry.io/collector/extension/extensioncapabilities"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage"
-	"github.com/jaegertracing/jaeger/storage"
 )
 
 var (
-	_ extension.Extension = (*storageCleaner)(nil)
-	_ extension.Dependent = (*storageCleaner)(nil)
+	_ extension.Extension             = (*storageCleaner)(nil)
+	_ extensioncapabilities.Dependent = (*storageCleaner)(nil)
 )
 
 const (
@@ -43,24 +44,13 @@ func newStorageCleaner(config *Config, telset component.TelemetrySettings) *stor
 }
 
 func (c *storageCleaner) Start(_ context.Context, host component.Host) error {
-	storageFactory, err := jaegerstorage.GetStorageFactory(c.config.TraceStorage, host)
+	purger, err := jaegerstorage.GetPurger(c.config.TraceStorage, host)
 	if err != nil {
-		return fmt.Errorf("cannot find storage factory '%s': %w", c.config.TraceStorage, err)
-	}
-
-	purgeStorage := func(httpContext context.Context) error {
-		purger, ok := storageFactory.(storage.Purger)
-		if !ok {
-			return fmt.Errorf("storage %s does not implement Purger interface", c.config.TraceStorage)
-		}
-		if err := purger.Purge(httpContext); err != nil {
-			return fmt.Errorf("error purging storage: %w", err)
-		}
-		return nil
+		return fmt.Errorf("failed to obtain purger: %w", err)
 	}
 
 	purgeHandler := func(w http.ResponseWriter, r *http.Request) {
-		if err := purgeStorage(r.Context()); err != nil {
+		if err := purger.Purge(r.Context()); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -79,7 +69,7 @@ func (c *storageCleaner) Start(_ context.Context, host component.Host) error {
 	go func() {
 		if err := c.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			err = fmt.Errorf("error starting cleaner server: %w", err)
-			c.telset.ReportStatus(component.NewFatalErrorEvent(err))
+			componentstatus.ReportStatus(host, componentstatus.NewFatalErrorEvent(err))
 		}
 	}()
 

@@ -10,14 +10,7 @@ FROM $base_image AS release
 ARG TARGETARCH
 ARG USER_UID=10001
 
-# Agent zipkin.thrift compact
-EXPOSE 5775/udp
-
-# Agent jaeger.thrift compact
-EXPOSE 6831/udp
-
-# Agent jaeger.thrift binary
-EXPOSE 6832/udp
+ENV JAEGER_LISTEN_HOST=0.0.0.0
 
 # Sampling config HTTP
 EXPOSE 5778
@@ -43,6 +36,12 @@ EXPOSE 9411
 # Web HTTP
 EXPOSE 16686
 
+# Health Check gRPC
+EXPOSE 13132
+
+# Health Check HTTP
+EXPOSE 13133
+
 COPY jaeger-linux-$TARGETARCH /cmd/jaeger/jaeger-linux
 COPY sampling-strategies.json /cmd/jaeger/sampling-strategies.json
 
@@ -56,14 +55,7 @@ FROM $debug_image AS debug
 ARG TARGETARCH=amd64
 ARG USER_UID=10001
 
-# Agent zipkin.thrift compact
-EXPOSE 5775/udp
-
-# Agent jaeger.thrift compact
-EXPOSE 6831/udp
-
-# Agent jaeger.thrift binary
-EXPOSE 6832/udp
+ENV JAEGER_LISTEN_HOST=0.0.0.0
 
 # Sampling config HTTP
 EXPOSE 5778
@@ -91,6 +83,12 @@ EXPOSE 16686
 
 # Delve
 EXPOSE 12345
+
+# Health Check gRPC
+EXPOSE 13132
+
+# Health Check HTTP
+EXPOSE 13133
 
 COPY jaeger-debug-linux-$TARGETARCH /cmd/jaeger/jaeger-linux
 COPY sampling-strategies.json /cmd/jaeger/sampling-strategies.json

@@ -1,17 +1,6 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package model_test
 
@@ -22,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger-idl/model/v1"
 )
 
 func TestKeyValueString(t *testing.T) {
@@ -32,7 +21,7 @@ func TestKeyValueString(t *testing.T) {
 	assert.Equal(t, "y", kv.VStr)
 	assert.False(t, kv.Bool())
 	assert.Equal(t, int64(0), kv.Int64())
-	assert.Equal(t, float64(0), kv.Float64())
+	assert.InDelta(t, float64(0), kv.Float64(), 0.01)
 	assert.Nil(t, kv.Binary())
 }
 
@@ -54,7 +43,7 @@ func TestKeyValueFloat64(t *testing.T) {
 	kv := model.Float64("x", 123.345)
 	assert.Equal(t, "x", kv.Key)
 	assert.Equal(t, model.Float64Type, kv.VType)
-	assert.Equal(t, 123.345, kv.Float64())
+	assert.InDelta(t, 123.345, kv.Float64(), 1e-4)
 }
 
 func TestKeyValueBinary(t *testing.T) {

@@ -18,11 +18,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/jaegertracing/jaeger-idl/model/v1"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/remotesampling"
-	"github.com/jaegertracing/jaeger/model"
-	"github.com/jaegertracing/jaeger/plugin/sampling/strategyprovider/adaptive"
-	"github.com/jaegertracing/jaeger/plugin/storage/memory"
+	"github.com/jaegertracing/jaeger/internal/sampling/samplingstrategy/adaptive"
+	"github.com/jaegertracing/jaeger/internal/storage/v1/memory"
 )
 
 func makeStorageExtension(t *testing.T, memstoreName string) component.Host {
@@ -32,14 +32,17 @@ func makeStorageExtension(t *testing.T, memstoreName string) component.Host {
 		MeterProvider:  noopmetric.NewMeterProvider(),
 	}
 	extensionFactory := jaegerstorage.NewFactory()
-	storageExtension, err := extensionFactory.CreateExtension(
+	storageExtension, err := extensionFactory.Create(
 		context.Background(),
 		extension.Settings{
+			ID:                jaegerstorage.ID,
 			TelemetrySettings: telemetrySettings,
 		},
-		&jaegerstorage.Config{Backends: map[string]jaegerstorage.Backend{
-			memstoreName: {Memory: &memory.Configuration{MaxTraces: 10000}},
-		}},
+		&jaegerstorage.Config{
+			TraceBackends: map[string]jaegerstorage.TraceBackend{
+				memstoreName: {Memory: &memory.Configuration{MaxTraces: 10000}},
+			},
+		},
 	)
 	require.NoError(t, err)
 
@@ -56,9 +59,10 @@ var _ component.Config = (*Config)(nil)
 
 func makeRemoteSamplingExtension(t *testing.T, cfg component.Config) component.Host {
 	extensionFactory := remotesampling.NewFactory()
-	samplingExtension, err := extensionFactory.CreateExtension(
+	samplingExtension, err := extensionFactory.Create(
 		context.Background(),
 		extension.Settings{
+			ID: remotesampling.ID,
 			TelemetrySettings: component.TelemetrySettings{
 				Logger:         zap.L(),
 				TracerProvider: nooptrace.NewTracerProvider(),
@@ -138,7 +142,7 @@ type notClosingAgg struct{}
 
 func (*notClosingAgg) Close() error { return errors.New("not closing") }
 
-func (*notClosingAgg) HandleRootSpan(*model.Span, *zap.Logger)                     {}
+func (*notClosingAgg) HandleRootSpan(*model.Span)                                  {}
 func (*notClosingAgg) RecordThroughput(string, string, model.SamplerType, float64) {}
 func (*notClosingAgg) Start()                                                      {}
 

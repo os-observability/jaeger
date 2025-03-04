@@ -27,10 +27,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jaegertracing/jaeger-idl/proto-gen/api_v2"
 	"github.com/jaegertracing/jaeger/cmd/jaeger/internal/extension/jaegerstorage"
-	"github.com/jaegertracing/jaeger/plugin/sampling/strategyprovider/adaptive"
-	"github.com/jaegertracing/jaeger/plugin/storage/memory"
-	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
+	"github.com/jaegertracing/jaeger/internal/sampling/samplingstrategy/adaptive"
+	"github.com/jaegertracing/jaeger/internal/storage/v1/memory"
 )
 
 func makeStorageExtension(t *testing.T, memstoreName string) component.Host {
@@ -40,12 +40,13 @@ func makeStorageExtension(t *testing.T, memstoreName string) component.Host {
 		MeterProvider:  noopmetric.NewMeterProvider(),
 	}
 	extensionFactory := jaegerstorage.NewFactory()
-	storageExtension, err := extensionFactory.CreateExtension(
+	storageExtension, err := extensionFactory.Create(
 		context.Background(),
 		extension.Settings{
+			ID:                jaegerstorage.ID,
 			TelemetrySettings: telemetrySettings,
 		},
-		&jaegerstorage.Config{Backends: map[string]jaegerstorage.Backend{
+		&jaegerstorage.Config{TraceBackends: map[string]jaegerstorage.TraceBackend{
 			memstoreName: {Memory: &memory.Configuration{MaxTraces: 10000}},
 		}},
 	)
@@ -62,9 +63,10 @@ func makeStorageExtension(t *testing.T, memstoreName string) component.Host {
 
 func makeRemoteSamplingExtension(t *testing.T, cfg component.Config) component.Host {
 	extensionFactory := NewFactory()
-	samplingExtension, err := extensionFactory.CreateExtension(
+	samplingExtension, err := extensionFactory.Create(
 		context.Background(),
 		extension.Settings{
+			ID: ID,
 			TelemetrySettings: component.TelemetrySettings{
 				Logger:         zap.L(),
 				TracerProvider: nooptrace.NewTracerProvider(),
@@ -90,7 +92,8 @@ func TestStartFileBasedProvider(t *testing.T) {
 	cfg.GRPC = nil
 	require.NoError(t, cfg.Validate())
 
-	ext, err := factory.CreateExtension(context.Background(), extension.Settings{
+	ext, err := factory.Create(context.Background(), extension.Settings{
+		ID:                ID,
 		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}, cfg)
 	require.NoError(t, err)
@@ -110,10 +113,12 @@ func TestStartHTTP(t *testing.T) {
 	cfg.GRPC = nil
 	require.NoError(t, cfg.Validate())
 
-	ext, err := factory.CreateExtension(context.Background(), extension.Settings{
+	ext, err := factory.Create(context.Background(), extension.Settings{
+		ID:                ID,
 		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}, cfg)
 	require.NoError(t, err)
+	// here, the file is using a service hardcoded in the sampling-services.json file
 	host := makeStorageExtension(t, "foobar")
 	require.NoError(t, ext.Start(context.Background(), host))
 
@@ -150,10 +155,12 @@ func TestStartGRPC(t *testing.T) {
 	}
 	require.NoError(t, cfg.Validate())
 
-	ext, err := factory.CreateExtension(context.Background(), extension.Settings{
+	ext, err := factory.Create(context.Background(), extension.Settings{
+		ID:                ID,
 		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}, cfg)
 	require.NoError(t, err)
+	// here, the file is using a service hardcoded in the sampling-services.json file
 	host := makeStorageExtension(t, "foobar")
 	require.NoError(t, ext.Start(context.Background(), host))
 
@@ -164,7 +171,7 @@ func TestStartGRPC(t *testing.T) {
 	c := api_v2.NewSamplingManagerClient(conn)
 	response, err := c.GetSamplingStrategy(context.Background(), &api_v2.SamplingStrategyParameters{ServiceName: "foo"})
 	require.NoError(t, err)
-	require.Equal(t, 0.8, response.ProbabilisticSampling.SamplingRate)
+	require.InDelta(t, 0.8, response.ProbabilisticSampling.SamplingRate, 0.01)
 
 	require.NoError(t, ext.Shutdown(context.Background()))
 }
@@ -178,7 +185,8 @@ func TestStartAdaptiveProvider(t *testing.T) {
 	cfg.GRPC = nil
 	require.NoError(t, cfg.Validate())
 
-	ext, err := factory.CreateExtension(context.Background(), extension.Settings{
+	ext, err := factory.Create(context.Background(), extension.Settings{
+		ID:                ID,
 		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}, cfg)
 	require.NoError(t, err)
@@ -197,7 +205,7 @@ func TestStartAdaptiveStrategyProviderErrors(t *testing.T) {
 		},
 	}
 	err := ext.startAdaptiveStrategyProvider(host)
-	require.ErrorContains(t, err, "cannot find storage factory")
+	require.ErrorContains(t, err, "failed to obtain sampling store factory")
 }
 
 func TestGetAdaptiveSamplingComponents(t *testing.T) {
@@ -244,7 +252,8 @@ func TestGetAdaptiveSamplingComponentsErrors(t *testing.T) {
 func TestDependencies(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig().(*Config)
-	ext, err := factory.CreateExtension(context.Background(), extension.Settings{
+	ext, err := factory.Create(context.Background(), extension.Settings{
+		ID:                ID,
 		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}, cfg)
 	require.NoError(t, err)

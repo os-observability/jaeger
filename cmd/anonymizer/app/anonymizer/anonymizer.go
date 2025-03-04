@@ -1,16 +1,5 @@
 // Copyright (c) 2020 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package anonymizer
 
@@ -26,18 +15,18 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger-idl/model/v1"
 	uiconv "github.com/jaegertracing/jaeger/model/converter/json"
 	uimodel "github.com/jaegertracing/jaeger/model/json"
 )
 
 var allowedTags = map[string]bool{
-	"error":            true,
-	"span.kind":        true,
-	"http.method":      true,
-	"http.status_code": true,
-	"sampler.type":     true,
-	"sampler.param":    true,
+	"error":               true,
+	"http.method":         true,
+	"http.status_code":    true,
+	model.SpanKindKey:     true,
+	model.SamplerTypeKey:  true,
+	model.SamplerParamKey: true,
 }
 
 const PermUserRW = 0o600 // Read-write for owner only

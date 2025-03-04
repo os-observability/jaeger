@@ -1,16 +1,5 @@
 // Copyright (c) 2023 The Jaeger Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package cmd
 
@@ -28,6 +17,11 @@ var (
 	fixDBConnDisableMutex  bool
 	fixRouteWorkerPoolSize int
 
+	customerHostname string
+	driverHostname   string
+	frontendHostname string
+	routeHostname    string
+
 	customerPort int
 	driverPort   int
 	frontendPort int
@@ -44,6 +38,12 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().DurationVarP(&fixDBConnDelay, "fix-db-query-delay", "D", 300*time.Millisecond, "Average latency of MySQL DB query")
 	cmd.PersistentFlags().BoolVarP(&fixDBConnDisableMutex, "fix-disable-db-conn-mutex", "M", false, "Disables the mutex guarding db connection")
 	cmd.PersistentFlags().IntVarP(&fixRouteWorkerPoolSize, "fix-route-worker-pool-size", "W", 3, "Default worker pool size")
+
+	// Add flags to choose hostnames for services
+	cmd.PersistentFlags().StringVar(&customerHostname, "customer-service-hostname", "0.0.0.0", "Hostname for customer service")
+	cmd.PersistentFlags().StringVar(&driverHostname, "driver-service-hostname", "0.0.0.0", "Hostname for driver service")
+	cmd.PersistentFlags().StringVar(&frontendHostname, "frontend-service-hostname", "0.0.0.0", "Hostname for frontend service")
+	cmd.PersistentFlags().StringVar(&routeHostname, "route-service-hostname", "0.0.0.0", "Hostname for routing service")
 
 	// Add flags to choose ports for services
 	cmd.PersistentFlags().IntVarP(&customerPort, "customer-service-port", "c", 8081, "Port for customer service")

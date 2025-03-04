@@ -1,23 +1,13 @@
 // Copyright (c) 2019 The Jaeger Authors.
 // Copyright (c) 2017 Uber Technologies, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package eswrapper
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	esV8 "github.com/elastic/go-elasticsearch/v8"
@@ -204,7 +194,7 @@ func (c TemplateCreatorWrapperV8) Do(context.Context) (*elastic.IndicesPutTempla
 	if err != nil {
 		return nil, fmt.Errorf("error creating index template %s: %w", c.templateName, err)
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("error creating index template %s: %s", c.templateName, resp)
 	}
 	return nil, nil // no response expected by span writer
